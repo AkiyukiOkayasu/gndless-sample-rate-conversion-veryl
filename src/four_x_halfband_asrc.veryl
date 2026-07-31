@@ -55,7 +55,7 @@ pub module FourXHalfbandAsrc #(
 
     var asrc_input_ready: bbool;
 
-    inst phase_accumulator: nco::FractionalPhaseAccumulator #(
+    inst phase_accumulator: gndless_nco::FractionalPhaseAccumulator #(
         WIDTH: PHASE_WIDTH,
     ) (
         clk                          ,
@@ -66,7 +66,7 @@ pub module FourXHalfbandAsrc #(
         advance                      ,
     );
 
-    inst first_halfband: filter::HalfbandInterpolator2x #(
+    inst first_halfband: gndless_filter::HalfbandInterpolator2x #(
         SAMPLE_WIDTH   : SAMPLE_WIDTH,
         COEFFICIENT_SET: 1           ,
     ) (
@@ -80,7 +80,7 @@ pub module FourXHalfbandAsrc #(
         output_sample: first_output_sample,
     );
 
-    inst second_halfband: filter::HalfbandInterpolator2x #(
+    inst second_halfband: gndless_filter::HalfbandInterpolator2x #(
         SAMPLE_WIDTH   : SAMPLE_WIDTH,
         COEFFICIENT_SET: 2           ,
     ) (

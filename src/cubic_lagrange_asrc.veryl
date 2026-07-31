@@ -55,7 +55,7 @@ pub module CubicLagrangeAsrc #(
         o_data       : fifo_q          ,
     );
 
-    inst interpolator: interpolation::CubicLagrangeInterpolator #(
+    inst interpolator: gndless_interpolation::CubicLagrangeInterpolator #(
         SAMPLE_WIDTH: SAMPLE_WIDTH,
         PHASE_WIDTH : PHASE_WIDTH ,
     ) (

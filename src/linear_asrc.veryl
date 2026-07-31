@@ -70,7 +70,7 @@ pub module LinearAsrc #(
         o_data       : fifo_q          ,
     );
 
-    inst linear_interpolator: interpolation::LinearInterpolator #(
+    inst linear_interpolator: gndless_interpolation::LinearInterpolator #(
         SAMPLE_WIDTH: SAMPLE_WIDTH,
         PHASE_WIDTH : PHASE_WIDTH ,
     ) (
@@ -137,7 +137,7 @@ pub module LinearAsrc #(
 
 /// FIFOから入力窓を補充しながら、50MHzの全クロックで線形補間値を出力するASRC
 ///
-/// `phase`と`advance`は`nco::FractionalPhaseAccumulator`から受け取る。
+/// `phase`と`advance`は`gndless_nco::FractionalPhaseAccumulator`から受け取る。
 /// `phase`が現在の入力サンプルから次の入力サンプルへ進む割合を表し、`advance`が次のクロックで窓を1サンプル進めることを表す。
 /// 起動時に2サンプルの補間窓と、`STARTUP_LEVEL`以上の未消費FIFOが揃うまでは`output_active`をfalseにして0を出力する。burst入力ではこの値を大きくして、出力開始前にFIFOへ余裕を持たせる。
 /// 動作開始後は、入力不足を`underflow`へstickyに記録しながら出力を止めない。
@@ -208,7 +208,7 @@ pub module ContinuousLinearAsrc #(
         o_data       : fifo_q          ,
     );
 
-    inst linear_interpolator: interpolation::LinearInterpolator #(
+    inst linear_interpolator: gndless_interpolation::LinearInterpolator #(
         SAMPLE_WIDTH: SAMPLE_WIDTH,
         PHASE_WIDTH : PHASE_WIDTH ,
     ) (
@@ -289,7 +289,7 @@ module test_linear_asrc {
     var output_sample: signed logic<SAMPLE_WIDTH>   ;
     var ratio        : logic       <PHASE_WIDTH + 2>;
 
-    inst linear_interpolator: interpolation::LinearInterpolator #(
+    inst linear_interpolator: gndless_interpolation::LinearInterpolator #(
         SAMPLE_WIDTH: SAMPLE_WIDTH,
         PHASE_WIDTH : PHASE_WIDTH ,
     ) (
@@ -379,7 +379,7 @@ module test_continuous_linear_asrc {
     var phase_enable : bbool           ;
     var phase_inc    : logic       <4> ;
 
-    inst phase_accumulator: nco::FractionalPhaseAccumulator #(
+    inst phase_accumulator: gndless_nco::FractionalPhaseAccumulator #(
         WIDTH: PHASE_WIDTH,
     ) (
         clk                          ,

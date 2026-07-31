@@ -42,7 +42,7 @@ module fixed_rate_asrc_benchmark {
 
     var file: $tb::file;
 
-    inst source_phase_accumulator: nco::FractionalPhaseAccumulator #(
+    inst source_phase_accumulator: gndless_nco::FractionalPhaseAccumulator #(
         WIDTH: PHASE_WIDTH,
     ) (
         clk                                    ,
@@ -53,7 +53,7 @@ module fixed_rate_asrc_benchmark {
         advance        : source_advance        ,
     );
 
-    inst direct_phase_accumulator: nco::FractionalPhaseAccumulator #(
+    inst direct_phase_accumulator: gndless_nco::FractionalPhaseAccumulator #(
         WIDTH: PHASE_WIDTH,
     ) (
         clk                                    ,

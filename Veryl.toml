@@ -17,3 +17,8 @@ fixedpoint = { path = "../fixedpoint" }
 interpolation = { path = "../interpolation" }
 nco = { path = "../nco" }
 filter = { path = "../filter" }
+
+[publish]
+register = true
+bump_commit = true
+publish_commit = true

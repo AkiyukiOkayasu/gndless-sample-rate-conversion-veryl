@@ -200,6 +200,8 @@ def analyze(path: Path, discard_cycles: int) -> list[dict[str, object]]:
         summary["two_minus_direct_gain_db"] = 20.0 * math.log10(
             two_amplitude / direct_amplitude
         )
+        # 入力サンプルレートの周辺に現れるスペクトルイメージ成分を測る。
+        # 例えば48kHz入力の20kHzトーンでは、イメージ周波数は28kHzになる。
         image_frequency_hz = abs(SOURCE_HZ - frequency_hz)
         summary["image_frequency_hz"] = image_frequency_hz
         summary["image"] = {}

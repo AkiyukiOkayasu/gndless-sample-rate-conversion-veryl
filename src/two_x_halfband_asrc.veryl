@@ -10,7 +10,7 @@
 ///       → 2-sample burst → FIFO → continuous linear ASRC → output
 /// ```
 ///
-/// HBFはナイキスト付近のイメージを抑えるため、短いset2ではなくset1を使う。
+/// HBFはナイキスト付近のスペクトルイメージ成分を抑えるため、短いset2ではなくset1を使う。
 /// `STARTUP_LEVEL`までFIFOを満たしてから出力を開始し、入力欠落は`underflow`へ
 /// stickyに記録する。
 pub module TwoXHalfbandAsrc #(

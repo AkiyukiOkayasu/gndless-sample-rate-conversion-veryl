@@ -2,11 +2,24 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-02
+
+### Added
+
+- 汎用`PhaseIncrementEstimator`を追加し、sample-rate trackingから連続ASRC用の位相増分を生成可能にした
 - `TwoXHalfbandAsrc`（set1、2倍halfband＋連続線形ASRC）を追加。set2候補は20kHz帯域の減衰とスペクトルイメージ成分の抑制が悪化するため既定経路には採用しない
+
+### Changed
+
+- スペクトルイメージ成分の解析説明を明確化
+
+## [0.1.0] - 2026-08-02
+
 - 公開moduleのparam/port doc commentを追加し、説明文の途中改行を整理
 - doc commentの句点と体言止めの表記を整理
 - doc commentのsummary表記を統一
 - 各testのdoc commentを検証目的が分かる表現へ統一
+
 ### Changed
 
 - 固定レートASRC benchmarkの入力を48点の固定正弦波vectorへ変更し、`oscillator`依存を削除

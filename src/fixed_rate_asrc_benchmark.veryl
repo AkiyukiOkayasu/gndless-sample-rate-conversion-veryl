@@ -1,6 +1,6 @@
 /// sample_rate_conversion packageの固定レートASRC経路を比較するベンチマーク
 ///
-/// 50MHzクロック上で48kHzの入力validを分数位相アキュムレータから生成し、48点の固定正弦波vectorを2経路へ与える。CSV生成は長時間のためignored testとし、出力は4クロックに1回だけ記録して外部の標準Python解析へ渡す
+/// 50MHzクロック上で48kHzの入力validを分数位相アキュムレータから生成し、48点の固定正弦波vectorを3経路へ与える。CSV生成は長時間のためignored testとし、出力は4クロックに1回だけ記録して外部の標準Python解析へ渡す
 #[test(fixed_rate_asrc_benchmark)]
 #[ignore]
 module fixed_rate_asrc_benchmark {
@@ -39,6 +39,13 @@ module fixed_rate_asrc_benchmark {
     var four_output_sample  : signed logic<SAMPLE_WIDTH>;
     var four_input_level    : logic       <4>           ;
     var four_underflow      : bbool                     ;
+
+    var two_input_ready    : bbool                     ;
+    var two_phase_increment: logic       <PHASE_WIDTH> ;
+    var two_output_active  : bbool                     ;
+    var two_output_sample  : signed logic<SAMPLE_WIDTH>;
+    var two_input_level    : logic       <4>           ;
+    var two_underflow      : bbool                     ;
 
     var file: $tb::file;
 
@@ -97,6 +104,23 @@ module fixed_rate_asrc_benchmark {
         output_sample  : four_output_sample  ,
         input_level    : four_input_level    ,
         underflow      : four_underflow      ,
+    );
+
+    inst two_asrc: TwoXHalfbandAsrc #(
+        SAMPLE_WIDTH: SAMPLE_WIDTH,
+        PHASE_WIDTH : PHASE_WIDTH ,
+        INPUT_DEPTH : 8           ,
+    ) (
+        clk                                 ,
+        rst                                 ,
+        input_valid                         ,
+        input_ready    : two_input_ready    ,
+        input_sample                        ,
+        phase_increment: two_phase_increment,
+        output_active  : two_output_active  ,
+        output_sample  : two_output_sample  ,
+        input_level    : two_input_level    ,
+        underflow      : two_underflow      ,
     );
 
     function benchmark_sine (
@@ -165,8 +189,10 @@ module fixed_rate_asrc_benchmark {
         source_phase_increment = INPUT_PHASE_INCREMENT;
         direct_phase_increment = DIRECT_PHASE_INCREMENT;
         four_phase_increment   = FOUR_PHASE_INCREMENT;
-        source_index           = 0;
-        source_table_index     = 0;
+        // TwoXHalfbandAsrcは入力レート基準の増分を受け取り、内部で2倍する。
+        two_phase_increment = INPUT_PHASE_INCREMENT;
+        source_index        = 0;
+        source_table_index  = 0;
         clk.next(4);
 
         for cycle in 0..CASE_CYCLES {
@@ -174,6 +200,7 @@ module fixed_rate_asrc_benchmark {
             if source_advance {
                 $assert(direct_input_ready, "direct ASRC input FIFO must keep up with 48kHz");
                 $assert(four_input_ready, "4x HBF path must keep up with 48kHz");
+                $assert(two_input_ready, "2x HBF path must keep up with 48kHz");
                 input_valid        =  true;
                 input_sample       =  benchmark_sine(source_table_index);
                 source_table_index =  (source_table_index + table_step) % 7'd48;
@@ -182,7 +209,7 @@ module fixed_rate_asrc_benchmark {
 
             if cycle[1:0] == 2'b00 {
                 file.write(
-                    "%d,%d,%d,%h,%d,%h,%d,%h,%h,%d,%d\n",
+                    "%d,%d,%d,%h,%d,%h,%d,%h,%h,%d,%h,%h,%d,%d,%d\n",
                     case_id,
                     cycle,
                     source_index,
@@ -192,8 +219,12 @@ module fixed_rate_asrc_benchmark {
                     four_output_active,
                     four_output_sample,
                     four_input_level,
+                    two_output_active,
+                    two_output_sample,
+                    two_input_level,
                     direct_underflow,
                     four_underflow,
+                    two_underflow,
                 );
             }
             clk.next(1);
@@ -203,7 +234,7 @@ module fixed_rate_asrc_benchmark {
     initial {
         file.open("target/fixed_rate_asrc_benchmark.csv");
         file.write(
-            "case,cycle,source_index,input_sample_bits,direct_active,direct_sample_bits,four_active,four_sample_bits,four_fifo_level,direct_underflow,four_underflow\n",
+            "case,cycle,source_index,input_sample_bits,direct_active,direct_sample_bits,four_active,four_sample_bits,four_fifo_level,two_active,two_sample_bits,two_fifo_level,direct_underflow,four_underflow,two_underflow\n",
         );
 
         // 1kHz、10kHz、18kHz、20kHzを48kHz入力の正弦波として比較する

@@ -11,6 +11,8 @@ from pathlib import Path
 
 
 CLOCK_HZ = 50_000_000.0
+RECORD_STRIDE = 4
+SOURCE_HZ = 48_000.0
 SAMPLE_WIDTH = 32
 FULL_SCALE = (1 << (SAMPLE_WIDTH - 1)) - 1
 TONE_HZ = {
@@ -28,6 +30,9 @@ REQUIRED_COLUMNS = {
     "four_sample_bits",
     "direct_underflow",
     "four_underflow",
+    "two_active",
+    "two_sample_bits",
+    "two_underflow",
 }
 
 
@@ -66,8 +71,13 @@ def read_rows(path: Path) -> list[dict[str, int]]:
                         "four": decode_twos_complement(
                             row["four_sample_bits"], SAMPLE_WIDTH
                         ),
+                        "two_active": int(row["two_active"]),
+                        "two": decode_twos_complement(
+                            row["two_sample_bits"], SAMPLE_WIDTH
+                        ),
                         "direct_underflow": int(row["direct_underflow"]),
                         "four_underflow": int(row["four_underflow"]),
+                        "two_underflow": int(row["two_underflow"]),
                     }
                 )
             except (KeyError, TypeError, ValueError) as error:
@@ -138,6 +148,21 @@ def fit_sine(rows: list[dict[str, int]], signal: str, frequency_hz: float) -> di
     }
 
 
+def project_amplitude(rows: list[dict[str, int]], signal: str, frequency_hz: float) -> float:
+    """既知周波数成分の振幅を直交射影で求める（DCは除外）。"""
+    selected = [row for row in rows if row[f"{signal}_active"]]
+    if not selected:
+        raise ValueError(f"case {rows[0]['case']} の{signal}に有効な出力がない")
+    sine_sum = 0.0
+    cosine_sum = 0.0
+    for row in selected:
+        angle = 2.0 * math.pi * frequency_hz * row["cycle"] / CLOCK_HZ
+        sine_sum += row[signal] * math.sin(angle)
+        cosine_sum += row[signal] * math.cos(angle)
+    scale = 2.0 / len(selected)
+    return math.hypot(scale * sine_sum, scale * cosine_sum)
+
+
 def analyze(path: Path, discard_cycles: int) -> list[dict[str, object]]:
     rows = read_rows(path)
     grouped: dict[int, list[dict[str, int]]] = defaultdict(list)
@@ -157,17 +182,34 @@ def analyze(path: Path, discard_cycles: int) -> list[dict[str, object]]:
             "underflow": {
                 "direct": max(row["direct_underflow"] for row in case_rows),
                 "four_x_hbf": max(row["four_underflow"] for row in case_rows),
+                "two_x_hbf": max(row["two_underflow"] for row in case_rows),
             },
         }
         direct_result = fit_sine(usable, "direct", frequency_hz)
         four_result = fit_sine(usable, "four", frequency_hz)
+        two_result = fit_sine(usable, "two", frequency_hz)
         summary["direct"] = direct_result
         summary["four_x_hbf"] = four_result
+        summary["two_x_hbf"] = two_result
         direct_amplitude = direct_result["amplitude_lsb"]
         four_amplitude = four_result["amplitude_lsb"]
+        two_amplitude = two_result["amplitude_lsb"]
         summary["four_minus_direct_gain_db"] = 20.0 * math.log10(
             four_amplitude / direct_amplitude
         )
+        summary["two_minus_direct_gain_db"] = 20.0 * math.log10(
+            two_amplitude / direct_amplitude
+        )
+        image_frequency_hz = abs(SOURCE_HZ - frequency_hz)
+        summary["image_frequency_hz"] = image_frequency_hz
+        summary["image"] = {}
+        for label, signal in (("direct", "direct"), ("four_x_hbf", "four"), ("two_x_hbf", "two")):
+            image_amplitude = project_amplitude(usable, signal, image_frequency_hz)
+            fundamental = summary[label]["amplitude_lsb"]
+            summary["image"][label] = {
+                "amplitude_dbfs": 20.0 * math.log10(image_amplitude / FULL_SCALE),
+                "amplitude_dbc": 20.0 * math.log10(image_amplitude / fundamental),
+            }
         summaries.append(summary)
     return summaries
 
@@ -195,14 +237,19 @@ def main() -> None:
         print(
             f"case={summary['case']} frequency_hz={summary['frequency_hz']:.0f} "
             f"underflow={summary['underflow']} "
-            f"four_minus_direct_gain_db={summary['four_minus_direct_gain_db']:.6f}"
+            f"four_minus_direct_gain_db={summary['four_minus_direct_gain_db']:.6f} "
+            f"two_minus_direct_gain_db={summary['two_minus_direct_gain_db']:.6f} "
+            f"image_frequency_hz={summary['image_frequency_hz']:.0f}"
         )
-        for label in ("direct", "four_x_hbf"):
+        for label in ("direct", "four_x_hbf", "two_x_hbf"):
             result = summary[label]
+            image = summary["image"][label]
             print(
                 f"  {label}: rows={result['rows']} "
                 f"amplitude_dbfs={result['amplitude_dbfs']:.6f} "
-                f"rms_error_lsb={result['rms_error_lsb']:.3f}"
+                f"rms_error_lsb={result['rms_error_lsb']:.3f} "
+                f"image_dbfs={image['amplitude_dbfs']:.6f} "
+                f"image_dbc={image['amplitude_dbc']:.6f}"
             )
 
 

@@ -1,0 +1,158 @@
+/// 1段のhalfband補間と連続線形ASRCを接続した1ch 2倍オーバーサンプラ。
+///
+/// `phase_increment`は入力サンプルレートを基準にしたQ0.`PHASE_WIDTH`値で受け取る。
+/// halfbandで入力を2倍へ補間してからFIFOへ格納するため、内部のNCOには位相増分を
+/// 2倍して渡す。呼び出し側の推定器は48/44.1kHzなど元のADATレートの増分をそのまま
+/// 接続できる。
+///
+/// ```text
+/// input → Halfband 2x (COEFFICIENT_SET=1)
+///       → 2-sample burst → FIFO → continuous linear ASRC → output
+/// ```
+///
+/// HBFはナイキスト付近のイメージを抑えるため、短いset2ではなくset1を使う。
+/// `STARTUP_LEVEL`までFIFOを満たしてから出力を開始し、入力欠落は`underflow`へ
+/// stickyに記録する。
+pub module TwoXHalfbandAsrc #(
+    param SAMPLE_WIDTH: u32 = 32, /// 入出力サンプルの符号付きビット幅
+    param PHASE_WIDTH : u32 = 32, /// 入力レート基準の位相増分幅
+    param INPUT_DEPTH : u32 = 8 , /// 線形ASRC FIFOの深さ
+) (
+    clk            : input  clock                                , /// システムクロック
+    rst            : input  reset                                , /// リセット
+    input_valid    : input  bbool                                , /// 入力サンプル有効
+    input_ready    : output bbool                                , /// 入力受理可能
+    input_sample   : input  signed logic<SAMPLE_WIDTH>           , /// 入力サンプル
+    phase_increment: input  logic       <PHASE_WIDTH>            , /// 入力レート基準のQ0位相増分
+    output_active  : output bbool                                , /// 連続出力が有効
+    output_sample  : output signed logic<SAMPLE_WIDTH>           , /// 補間後の出力サンプル
+    input_level    : output logic       <$clog2(INPUT_DEPTH + 1)>, /// ASRC FIFOのワード数
+    underflow      : output bbool                                , /// 入力不足のstickyフラグ
+) {
+    var phase                      : logic<PHASE_WIDTH>;
+    var advance                    : bbool             ;
+    var phase_enable               : bbool             ;
+    var oversampled_phase_increment: logic<PHASE_WIDTH>;
+
+    var halfband_input_ready  : bbool                     ;
+    var halfband_output_valid : bbool                     ;
+    var halfband_output_ready : bbool                     ;
+    var halfband_output_sample: signed logic<SAMPLE_WIDTH>;
+    var asrc_input_ready      : bbool                     ;
+
+    // 2倍補間後のサンプル列は入力列の2倍の速度なので、NCOの進行も2倍にする。
+    assign oversampled_phase_increment = phase_increment << 1;
+
+    inst phase_accumulator: gndless_nco::FractionalPhaseAccumulator #(
+        WIDTH: PHASE_WIDTH,
+    ) (
+        clk                                         ,
+        rst                                         ,
+        enable         : phase_enable               ,
+        phase_increment: oversampled_phase_increment,
+        phase                                       ,
+        advance                                     ,
+    );
+
+    inst halfband: gndless_filter::HalfbandInterpolator2x #(
+        SAMPLE_WIDTH   : SAMPLE_WIDTH,
+        COEFFICIENT_SET: 1           ,
+    ) (
+        clk                                  ,
+        rst                                  ,
+        input_valid                          ,
+        input_ready  : halfband_input_ready  ,
+        input_sample                         ,
+        output_valid : halfband_output_valid ,
+        output_ready : halfband_output_ready ,
+        output_sample: halfband_output_sample,
+    );
+
+    inst continuous_asrc: ContinuousLinearAsrc #(
+        SAMPLE_WIDTH : SAMPLE_WIDTH,
+        PHASE_WIDTH  : PHASE_WIDTH ,
+        INPUT_DEPTH  : INPUT_DEPTH ,
+        STARTUP_LEVEL: 6           ,
+    ) (
+        clk                                  ,
+        rst                                  ,
+        input_valid  : halfband_output_valid ,
+        input_ready  : asrc_input_ready      ,
+        input_sample : halfband_output_sample,
+        input_level                          ,
+        phase                                ,
+        advance                              ,
+        output_active                        ,
+        output_sample                        ,
+        underflow                            ,
+    );
+
+    assign input_ready           = halfband_input_ready;
+    assign halfband_output_ready = asrc_input_ready;
+    assign phase_enable          = output_active;
+}
+
+/// 2倍HBFの2サンプルburst、FIFO prefill、内部位相増分2倍を検証する。
+#[test(test_two_x_halfband_asrc)]
+module test_two_x_halfband_asrc {
+    const SAMPLE_WIDTH: u32 = 16;
+    const PHASE_WIDTH : u32 = 32;
+
+    inst clk: $tb::clock_gen;
+    inst rst: $tb::reset_gen ( clk );
+
+    var input_valid    : bbool           ;
+    var input_ready    : bbool           ;
+    var input_sample   : signed logic<16>;
+    var phase_increment: logic       <32>;
+    var output_active  : bbool           ;
+    var output_sample  : signed logic<16>;
+    var input_level    : logic       <4> ;
+    var underflow      : bbool           ;
+
+    inst dut: TwoXHalfbandAsrc #(
+        SAMPLE_WIDTH: SAMPLE_WIDTH,
+        PHASE_WIDTH : PHASE_WIDTH ,
+        INPUT_DEPTH : 8           ,
+    ) (
+        clk              ,
+        rst              ,
+        input_valid      ,
+        input_ready      ,
+        input_sample     ,
+        phase_increment  ,
+        output_active    ,
+        output_sample    ,
+        input_level      ,
+        underflow        ,
+    );
+
+    initial {
+        input_valid     = false;
+        input_sample    = 16'sd1000;
+        phase_increment = 0;
+        rst.assert();
+
+        // 2サンプルburstを4回送ると、8ワード中6ワードが未消費になる。
+        for i in 0..4 {
+            $assert(input_ready, "2x ASRC must accept each input");
+            input_valid  = true;
+            input_sample = 16'sd1000 + (i as 16);
+            clk.next(1);
+            input_valid = false;
+            clk.next(80);
+        }
+
+        $assert(output_active, "2x ASRC must become active after HBF bursts");
+        $assert(input_level == 4'd6, "four 2x bursts must leave six FIFO samples after prefill");
+        $assert(!underflow, "2x ASRC must not underflow while phase is stopped");
+
+        // 48kHz / 50MHzの入力レート基準増分を設定する。
+        // 内部では2倍され、halfband後の96kHz列に対応する。
+        phase_increment = 32'd4123169;
+        clk.next(520);
+        $assert(output_active, "2x ASRC must keep its output active");
+        $assert(!underflow, "2x ASRC must not underflow from the buffered burst");
+        $finish();
+    }
+}

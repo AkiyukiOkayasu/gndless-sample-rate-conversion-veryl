@@ -4,6 +4,8 @@
 /// 位相累積、補間、FIFOレベル制御は後段のモジュールで行う。
 ///
 /// FILTER_SHIFTが大きいほど追従は遅くなるが、valid時刻の量子化やサンプル間ジッターを位相増分へ伝えにくくなる。
+/// STEP_THRESHOLD_SHIFTを有効にすると、平滑化周期との差がその2のべき乗分の1以上となった周期変更は即時に取り込む。
+/// TIMEOUT_PERIODを有効にすると、入力停止時にlockを解除して次の入力から測定をやり直す。
 /// `filtered_period`はPERIOD_WIDTH.FRACTION_WIDTHの固定小数点値である。
 ///
 /// 最初の`sample_valid`は基準時刻を記録するだけで、次の到着から`measured_period`を更新して`period_valid`を1クロックだけHighにする。
@@ -23,10 +25,12 @@
 /// }
 /// ```
 pub module SampleRateTracker #(
-    param PERIOD_WIDTH  : u32 = 16, /// 整数周期のビット幅
-    param FRACTION_WIDTH: u32 = 8 , /// 平滑化周期の小数部ビット幅
-    param FILTER_SHIFT  : u32 = 4 , /// 周期平滑化の右シフト量
-    param LOCK_COUNT    : u32 = 4 , /// lock判定に必要な有効測定回数
+    param PERIOD_WIDTH        : u32 = 16, /// 整数周期のビット幅
+    param FRACTION_WIDTH      : u32 = 8 , /// 平滑化周期の小数部ビット幅
+    param FILTER_SHIFT        : u32 = 4 , /// 周期平滑化の右シフト量
+    param LOCK_COUNT          : u32 = 4 , /// lock判定に必要な有効測定回数
+    param STEP_THRESHOLD_SHIFT: u32 = 0 , /// 即時追従する周期差の比率を表す右シフト量、0で無効
+    param TIMEOUT_PERIOD      : u32 = 0 , /// 入力停止とみなすクロック数、0で無効
 ) (
     clk            : input  clock                               , /// システムクロック
     rst            : input  reset                               , /// リセット
@@ -35,6 +39,7 @@ pub module SampleRateTracker #(
     period_valid   : output bbool                               , /// 周期更新パルス
     filtered_period: output logic<PERIOD_WIDTH + FRACTION_WIDTH>, /// 平滑化した固定小数点周期
     locked         : output bbool                               , /// lock状態
+    timed_out      : output bbool                               , /// 入力停止によるlock解除パルス
 ) {
     const LOCK_WIDTH: u32                 = $clog2(LOCK_COUNT + 1);
     const PERIOD_MAX: logic<PERIOD_WIDTH> = '1;
@@ -54,8 +59,10 @@ pub module SampleRateTracker #(
             filtered_period    = 0;
             period_valid       = false;
             locked             = false;
+            timed_out          = false;
         } else {
             period_valid = false;
+            timed_out    = false;
 
             if sample_valid {
                 if sample_seen {
@@ -69,22 +76,30 @@ pub module SampleRateTracker #(
                         filtered_period    = initial_period_ext << FRACTION_WIDTH;
                         filter_initialized = true;
                     } else {
-                        let current_ext : signed logic<PERIOD_WIDTH + FRACTION_WIDTH + 1> = $signed(
+                        let current_ext   : signed logic<PERIOD_WIDTH + FRACTION_WIDTH + 1> = $signed(
                                 {1'b0, current_period},
                             ) <<< FRACTION_WIDTH;
-                        let filtered_ext: signed logic<PERIOD_WIDTH + FRACTION_WIDTH + 1> = $signed(
+                        let filtered_ext  : signed logic<PERIOD_WIDTH + FRACTION_WIDTH + 1> = $signed(
                             {1'b0, filtered_period},
                         );
-                        let error       : signed logic<PERIOD_WIDTH + FRACTION_WIDTH + 1> = current_ext - filtered_ext;
-                        var correction  : signed logic<PERIOD_WIDTH + FRACTION_WIDTH + 1>;
-                        if FILTER_SHIFT == 0 {
-                            correction = error;
+                        let error         : signed logic<PERIOD_WIDTH + FRACTION_WIDTH + 1> = current_ext
+                            - filtered_ext;
+                        let step_threshold: signed logic<PERIOD_WIDTH + FRACTION_WIDTH + 1> = filtered_ext
+                            >>> STEP_THRESHOLD_SHIFT;
+                        var correction    : signed logic<PERIOD_WIDTH + FRACTION_WIDTH + 1>;
+                        if STEP_THRESHOLD_SHIFT != 0 && (error >= step_threshold || error <= -step_threshold) {
+                            filtered_period = current_ext[PERIOD_WIDTH + FRACTION_WIDTH - 1:0];
+                        } else if FILTER_SHIFT == 0 {
+                            correction      = error;
+                            let filtered_next  : signed logic<PERIOD_WIDTH + FRACTION_WIDTH + 1> = filtered_ext
+                                + correction;
+                            filtered_period = filtered_next[PERIOD_WIDTH + FRACTION_WIDTH - 1:0];
                         } else {
-                            correction = error >>> FILTER_SHIFT;
+                            correction      = error >>> FILTER_SHIFT;
+                            let filtered_next  : signed logic<PERIOD_WIDTH + FRACTION_WIDTH + 1> = filtered_ext
+                                + correction;
+                            filtered_period = filtered_next[PERIOD_WIDTH + FRACTION_WIDTH - 1:0];
                         }
-                        let filtered_next  : signed logic<PERIOD_WIDTH + FRACTION_WIDTH + 1> = filtered_ext
-                            + correction;
-                        filtered_period = filtered_next[PERIOD_WIDTH + FRACTION_WIDTH - 1:0];
                     }
 
                     if lock_measurements <: LOCK_COUNT - 1 {
@@ -98,7 +113,16 @@ pub module SampleRateTracker #(
                     elapsed_count = 0;
                 }
             } else if sample_seen {
-                if elapsed_count <: PERIOD_MAX {
+                if TIMEOUT_PERIOD != 0 && elapsed_count >= TIMEOUT_PERIOD - 1 {
+                    elapsed_count      = 0;
+                    sample_seen        = false;
+                    filter_initialized = false;
+                    lock_measurements  = 0;
+                    measured_period    = 0;
+                    filtered_period    = 0;
+                    locked             = false;
+                    timed_out          = true;
+                } else if elapsed_count <: PERIOD_MAX {
                     elapsed_count += 1;
                 }
             }
@@ -117,6 +141,7 @@ module test_sample_rate_tracker {
     var period_valid   : bbool   ;
     var filtered_period: logic<8>;
     var locked         : bbool   ;
+    var timed_out      : bbool   ;
 
     inst dut: SampleRateTracker #(
         PERIOD_WIDTH  : 4,
@@ -131,6 +156,7 @@ module test_sample_rate_tracker {
         period_valid     ,
         filtered_period  ,
         locked           ,
+        timed_out        ,
     );
 
     initial {
@@ -161,6 +187,79 @@ module test_sample_rate_tracker {
         $assert(period_valid && measured_period == 4'd7, "second measured period mismatch");
         $assert(filtered_period == 8'd96, "filtered period did not follow the input");
         $assert(locked, "tracker did not lock after the configured count");
+        $finish();
+    }
+}
+
+/// 大きな周期変更の即時追従と入力停止後の再測定を検証
+#[test(test_sample_rate_tracker_step_and_timeout)]
+module test_sample_rate_tracker_step_and_timeout {
+    inst clk: $tb::clock_gen;
+    inst rst: $tb::reset_gen ( clk );
+
+    var sample_valid   : bbool   ;
+    var measured_period: logic<6>;
+    var period_valid   : bbool   ;
+    var filtered_period: logic<8>;
+    var locked         : bbool   ;
+    var timed_out      : bbool   ;
+
+    inst dut: SampleRateTracker #(
+        PERIOD_WIDTH        : 6 ,
+        FRACTION_WIDTH      : 2 ,
+        FILTER_SHIFT        : 7 ,
+        LOCK_COUNT          : 2 ,
+        STEP_THRESHOLD_SHIFT: 4 ,
+        TIMEOUT_PERIOD      : 20,
+    ) (
+        clk              ,
+        rst              ,
+        sample_valid     ,
+        measured_period  ,
+        period_valid     ,
+        filtered_period  ,
+        locked           ,
+        timed_out        ,
+    );
+
+    function send_sample (
+        interval: input u32,
+    ) {
+        clk.next(interval - 1);
+        sample_valid = true;
+        clk.next(1);
+        sample_valid = false;
+    }
+
+    initial {
+        sample_valid = false;
+        rst.assert();
+
+        sample_valid = true;
+        clk.next(1);
+        sample_valid = false;
+        send_sample(10);
+        send_sample(10);
+        $assert(locked, "tracker did not acquire the initial rate");
+        $assert(filtered_period == 8'd40, "initial filtered period mismatch");
+
+        // 10→11clkは10%のstepなので、遅いIIRを待たず新周期へ切り替える。
+        send_sample(11);
+        $assert(period_valid && measured_period == 6'd11, "rate-step measurement mismatch");
+        $assert(filtered_period == 8'd44, "rate step did not bypass the IIR");
+
+        // 入力停止で旧lockを解除し、次の到着列を新規取得する。
+        clk.next(20);
+        $assert(timed_out, "tracker did not report the configured timeout");
+        $assert(!locked, "tracker kept lock after input timeout");
+
+        sample_valid = true;
+        clk.next(1);
+        sample_valid = false;
+        send_sample(10);
+        send_sample(10);
+        $assert(locked, "tracker did not reacquire after timeout");
+        $assert(filtered_period == 8'd40, "tracker did not restart from the new reference");
         $finish();
     }
 }

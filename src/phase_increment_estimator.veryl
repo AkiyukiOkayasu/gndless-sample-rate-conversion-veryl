@@ -1,0 +1,295 @@
+/// サンプル到着周期からASRC用の位相増分を生成する推定器
+///
+/// `SampleRateTracker`で平滑化した入力サンプル周期から、システムクロックあたりの入力位相進行量を求める。
+/// `phase_increment`はQ0.`PHASE_WIDTH`で、値が1.0未満となるサンプルレート比で使用する。
+/// `RATE_MULTIPLIER_SHIFT`を2にすると、4倍オーバーサンプリング経路用の位相増分を生成できる。
+/// 除算は逐次演算で行い、入力サンプル周期より短い`DIVIDEND_WIDTH`クロックで完了する必要がある。
+/// 除算中に新しい周期を観測した場合は最新の周期を保持し、現在の除算完了後に再計算する。
+/// `TIMEOUT_PERIOD`を有効にすると、入力停止時は古い位相増分を無効化して新しい到着列を再測定する。
+///
+/// ```wavedrom
+/// {
+///   signal: [
+///     { name: 'sample_valid',    wave: '010....10....10....' },
+///     { name: 'tracker_locked',  wave: '0...........1......' },
+///     { name: 'period_valid',    wave: '0......10....10....' },
+///     { name: 'divider',         wave: '0.......3.....4....', data: ['divide', 'divide'] },
+///     { name: 'locked',          wave: '0............1.....' }
+///   ],
+///   head: { text: 'Phase increment acquisition' }
+/// }
+/// ```
+pub module PhaseIncrementEstimator #(
+    param PERIOD_WIDTH         : u32 = 16, /// サンプル周期の整数部ビット幅
+    param PERIOD_FRACTION      : u32 = 8 , /// 平滑化周期の小数部ビット幅
+    param PHASE_WIDTH          : u32 = 32, /// 位相増分の小数部ビット幅
+    param FILTER_SHIFT         : u32 = 4 , /// 周期平滑化IIRの右シフト量
+    param LOCK_COUNT           : u32 = 4 , /// 位相増分の計算を始める測定回数
+    param RATE_MULTIPLIER_SHIFT: u32 = 0 , /// 位相増分に掛ける2のべき乗倍率のシフト量
+    param STEP_THRESHOLD_SHIFT : u32 = 0 , /// 即時追従する周期差の比率を表す右シフト量、0で無効
+    param TIMEOUT_PERIOD       : u32 = 0 , /// 入力停止とみなすクロック数、0で無効
+) (
+    clk            : input  clock             , /// システムクロック
+    rst            : input  reset             , /// 同期リセット
+    sample_valid   : input  bbool             , /// 入力サンプル到着パルス
+    phase_increment: output logic<PHASE_WIDTH>, /// ASRC用Q0位相増分
+    locked         : output bbool             , /// 位相増分が有効
+    range_error    : output bbool             , /// 位相増分が1.0以上となる設定または入力を検出
+) {
+    const DIVISOR_WIDTH : u32 = PERIOD_WIDTH + PERIOD_FRACTION;
+    const DIVIDEND_WIDTH: u32 = PHASE_WIDTH + PERIOD_FRACTION + RATE_MULTIPLIER_SHIFT + 1;
+    const COUNT_WIDTH   : u32 = $clog2(DIVIDEND_WIDTH);
+
+    var measured_period  : logic<PERIOD_WIDTH> ;
+    var period_valid     : bbool               ;
+    var filtered_period  : logic<DIVISOR_WIDTH>;
+    var tracker_locked   : bbool               ;
+    var tracker_timed_out: bbool               ;
+
+    var div_busy      : bbool                ;
+    var div_count     : logic<COUNT_WIDTH>   ;
+    var div_work      : logic<DIVIDEND_WIDTH>;
+    var div_remainder : logic<DIVIDEND_WIDTH>;
+    var div_quotient  : logic<DIVIDEND_WIDTH>;
+    var div_divisor   : logic<DIVISOR_WIDTH> ;
+    var pending_valid : bbool                ;
+    var pending_period: logic<DIVISOR_WIDTH> ;
+
+    inst tracker: SampleRateTracker #(
+        PERIOD_WIDTH        : PERIOD_WIDTH        ,
+        FRACTION_WIDTH      : PERIOD_FRACTION     ,
+        FILTER_SHIFT        : FILTER_SHIFT        ,
+        LOCK_COUNT          : LOCK_COUNT          ,
+        STEP_THRESHOLD_SHIFT: STEP_THRESHOLD_SHIFT,
+        TIMEOUT_PERIOD      : TIMEOUT_PERIOD      ,
+    ) (
+        clk                               ,
+        rst                               ,
+        sample_valid                      ,
+        measured_period                   ,
+        period_valid                      ,
+        filtered_period                   ,
+        locked         : tracker_locked   ,
+        timed_out      : tracker_timed_out,
+    );
+
+    always_ff {
+        if_reset {
+            div_busy        = false;
+            div_count       = 0;
+            div_work        = 0;
+            div_remainder   = 0;
+            div_quotient    = 0;
+            div_divisor     = 1;
+            pending_valid   = false;
+            pending_period  = 0;
+            phase_increment = 0;
+            locked          = false;
+            range_error     = false;
+        } else if !tracker_locked || tracker_timed_out {
+            div_busy        = false;
+            pending_valid   = false;
+            phase_increment = 0;
+            locked          = false;
+            range_error     = false;
+        } else {
+            if period_valid && filtered_period != 0 {
+                pending_period = filtered_period;
+                pending_valid  = true;
+            }
+
+            if !div_busy && pending_valid {
+                // 2^(PHASE_WIDTH + RATE_MULTIPLIER_SHIFT) / period を計算する。
+                div_busy      = true;
+                div_count     = 0;
+                div_work      = (1 as DIVIDEND_WIDTH) << (DIVIDEND_WIDTH - 1);
+                div_remainder = 0;
+                div_quotient  = 0;
+                div_divisor   = pending_period;
+                pending_valid = false;
+                range_error   = false;
+            } else if div_busy {
+                let rem_shifted : logic<DIVIDEND_WIDTH> = (div_remainder << 1) | (div_work >> (DIVIDEND_WIDTH - 1));
+                let work_shifted: logic<DIVIDEND_WIDTH> = div_work << 1;
+                let divisor_ext : logic<DIVIDEND_WIDTH> = div_divisor;
+
+                div_work = work_shifted;
+                if rem_shifted >= divisor_ext {
+                    div_remainder = rem_shifted - divisor_ext;
+                    div_quotient  = (div_quotient << 1) | 1;
+                } else {
+                    div_remainder = rem_shifted;
+                    div_quotient  = div_quotient << 1;
+                }
+
+                if div_count == DIVIDEND_WIDTH - 1 {
+                    var final_quotient: logic<DIVIDEND_WIDTH>;
+                    if rem_shifted >= divisor_ext {
+                        final_quotient = (div_quotient << 1) | 1;
+                    } else {
+                        final_quotient = div_quotient << 1;
+                    }
+                    if final_quotient[DIVIDEND_WIDTH - 1:PHASE_WIDTH] != 0 {
+                        phase_increment = 0;
+                        locked          = false;
+                        range_error     = true;
+                    } else {
+                        phase_increment = final_quotient[PHASE_WIDTH - 1:0];
+                        locked          = true;
+                        range_error     = false;
+                    }
+                    div_busy = false;
+                } else {
+                    div_count += 1;
+                }
+            }
+        }
+    }
+}
+
+/// 位相増分のスケーリングと逐次除算を検証
+#[test(test_phase_increment_estimator)]
+module test_phase_increment_estimator {
+    inst clk: $tb::clock_gen;
+    inst rst: $tb::reset_gen ( clk );
+
+    var sample_valid          : bbool   ;
+    var direct_phase_increment: logic<8>;
+    var direct_locked         : bbool   ;
+    var four_x_phase_increment: logic<8>;
+    var four_x_locked         : bbool   ;
+    var direct_range_error    : bbool   ;
+    var four_x_range_error    : bbool   ;
+
+    inst direct_dut: PhaseIncrementEstimator #(
+        PERIOD_WIDTH   : 4,
+        PERIOD_FRACTION: 2,
+        PHASE_WIDTH    : 8,
+        FILTER_SHIFT   : 0,
+        LOCK_COUNT     : 2,
+    ) (
+        clk                                    ,
+        rst                                    ,
+        sample_valid                           ,
+        phase_increment: direct_phase_increment,
+        locked         : direct_locked         ,
+        range_error    : direct_range_error    ,
+    );
+
+    inst four_x_dut: PhaseIncrementEstimator #(
+        PERIOD_WIDTH         : 4,
+        PERIOD_FRACTION      : 2,
+        PHASE_WIDTH          : 8,
+        FILTER_SHIFT         : 0,
+        LOCK_COUNT           : 2,
+        RATE_MULTIPLIER_SHIFT: 2,
+    ) (
+        clk                                    ,
+        rst                                    ,
+        sample_valid                           ,
+        phase_increment: four_x_phase_increment,
+        locked         : four_x_locked         ,
+        range_error    : four_x_range_error    ,
+    );
+
+    function sample_after_five_cycles () {
+        clk.next(4);
+        sample_valid = true;
+        clk.next(1);
+        sample_valid = false;
+    }
+
+    initial {
+        sample_valid = false;
+        rst.assert();
+
+        sample_valid = true;
+        clk.next(1);
+        sample_valid = false;
+        sample_after_five_cycles();
+        sample_after_five_cycles();
+        sample_after_five_cycles();
+        clk.next(24);
+
+        // 2^8 / 5 = 51、4 * 2^8 / 5 = 204。
+        $assert(direct_locked, "direct estimator did not lock");
+        $assert(direct_phase_increment == 8'd51, "direct phase increment mismatch");
+        $assert(!direct_range_error, "direct estimator reported an unexpected range error");
+        $assert(four_x_locked, "four-times estimator did not lock");
+        $assert(four_x_phase_increment == 8'd204, "four-times phase increment mismatch");
+        $assert(!four_x_range_error, "four-times estimator reported an unexpected range error");
+        $finish();
+    }
+}
+
+/// 除算中の周期更新と位相増分の範囲外入力を検証
+#[test(test_phase_increment_estimator_pending_and_range)]
+module test_phase_increment_estimator_pending_and_range {
+    inst clk: $tb::clock_gen;
+    inst rst: $tb::reset_gen ( clk );
+
+    var sample_valid   : bbool   ;
+    var phase_increment: logic<8>;
+    var locked         : bbool   ;
+    var range_error    : bbool   ;
+
+    inst dut: PhaseIncrementEstimator #(
+        PERIOD_WIDTH         : 4,
+        PERIOD_FRACTION      : 2,
+        PHASE_WIDTH          : 8,
+        FILTER_SHIFT         : 0,
+        LOCK_COUNT           : 2,
+        RATE_MULTIPLIER_SHIFT: 2,
+    ) (
+        clk              ,
+        rst              ,
+        sample_valid     ,
+        phase_increment  ,
+        locked           ,
+        range_error      ,
+    );
+
+    function send_sample (
+        interval: input u32,
+    ) {
+        clk.next(interval - 1);
+        sample_valid = true;
+        clk.next(1);
+        sample_valid = false;
+    }
+
+    initial {
+        sample_valid = false;
+        rst.assert();
+
+        sample_valid = true;
+        clk.next(1);
+        sample_valid = false;
+        send_sample(5);
+        send_sample(5);
+
+        // 13clkの除算中に5clk周期で新しい測定を複数回到着させる。
+        // 最新の6clk周期が残り、4 * 2^8 / 6 = 170へ更新される必要がある。
+        send_sample(6);
+        send_sample(6);
+        send_sample(6);
+        clk.next(24);
+        $assert(locked, "estimator lost the latest pending rate");
+        $assert(phase_increment == 8'd170, "estimator did not use the latest pending period");
+        $assert(!range_error, "valid pending rate reported a range error");
+
+        rst.assert();
+        sample_valid = true;
+        clk.next(1);
+        sample_valid = false;
+        send_sample(2);
+        send_sample(2);
+        send_sample(2);
+        clk.next(40);
+
+        // 4 * 2^8 / 2 = 512はQ0.8へ収まらない。
+        $assert(!locked, "out-of-range phase increment must not lock");
+        $assert(range_error, "out-of-range phase increment was not reported");
+        $finish();
+    }
+}

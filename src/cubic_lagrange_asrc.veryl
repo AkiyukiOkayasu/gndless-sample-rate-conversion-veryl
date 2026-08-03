@@ -2,8 +2,8 @@
 ///
 /// 初期化時に4サンプルを受け取り、出力tickごとに分数位相を進める。
 /// `ratio`が整数部Nを持つ場合は、窓をNサンプル進めて不足分をFIFOから補充する。Cubic補間のため、最初の出力は初期窓の2番目のsample位置になる。
-pub module CubicLagrangeAsrc #(
-    param SAMPLE_WIDTH: u32 = 32, /// 入出力サンプルの符号付きビット幅
+module CubicLagrangeAsrcCore #(
+    param SAMPLE_WIDTH: u32 = 24, /// 入出力サンプルの符号付きビット幅
     param PHASE_WIDTH : u32 = 32, /// `ratio`の小数部ビット幅
     param INPUT_DEPTH : u32 = 8 , /// 入力FIFOの深さ
 ) (
@@ -55,7 +55,7 @@ pub module CubicLagrangeAsrc #(
         o_data       : fifo_q          ,
     );
 
-    inst interpolator: gndless_interpolation::CubicLagrangeInterpolator #(
+    inst interpolator: gndless_interpolation::CubicLagrangeInterpolatorCore #(
         SAMPLE_WIDTH: SAMPLE_WIDTH,
         PHASE_WIDTH : PHASE_WIDTH ,
     ) (
@@ -150,6 +150,40 @@ pub module CubicLagrangeAsrc #(
     }
 }
 
+/// format付きstream interfaceを使うCubic Lagrange ASRC
+pub module CubicLagrangeAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFormat = gndless_fixedpoint::Q2_23> #(
+    param PHASE_WIDTH: u32 = 32, /// `ratio`の小数部bit幅
+    param INPUT_DEPTH: u32 = 8 , /// 入力FIFOの深さ
+) (
+    clk          : input   clock                                                                     ,
+    rst          : input   reset                                                                     ,
+    input_valid  : input   logic                                                                     ,
+    input_ready  : output  logic                                                                     ,
+    input_sample : modport gndless_fixedpoint::FixedPointPort::<FORMAT>::input_port                  ,
+    output_tick  : input   logic                                                                     ,
+    output_ready : output  logic                                                                     ,
+    output_valid : output  logic                                                                     ,
+    output_sample: modport gndless_fixedpoint::FixedPointPort::<FORMAT>::output_port                 ,
+    ratio        : input   logic                                                    <PHASE_WIDTH + 2>,
+) {
+    inst core: CubicLagrangeAsrcCore #(
+        SAMPLE_WIDTH: FORMAT::WIDTH,
+        PHASE_WIDTH : PHASE_WIDTH  ,
+        INPUT_DEPTH : INPUT_DEPTH  ,
+    ) (
+        clk                             ,
+        rst                             ,
+        input_valid                     ,
+        input_ready                     ,
+        input_sample : input_sample.raw ,
+        output_tick                     ,
+        output_ready                    ,
+        output_valid                    ,
+        output_sample: output_sample.raw,
+        ratio                           ,
+    );
+}
+
 /// Cubic Lagrange ASRCの4点窓、分数advance、FIFO補充を検証
 #[test(test_cubic_lagrange_asrc)]
 module test_cubic_lagrange_asrc {
@@ -165,7 +199,7 @@ module test_cubic_lagrange_asrc {
     inst clk: $tb::clock_gen;
     inst rst: $tb::reset_gen ( clk );
 
-    inst dut: CubicLagrangeAsrc #(
+    inst dut: CubicLagrangeAsrcCore #(
         SAMPLE_WIDTH: 16,
         PHASE_WIDTH : 4 ,
         INPUT_DEPTH : 4 ,

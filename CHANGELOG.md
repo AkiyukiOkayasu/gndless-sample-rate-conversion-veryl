@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 破壊的変更: `LinearAsrc`、`ContinuousLinearAsrc`、`CubicLagrangeAsrc`、`TwoXHalfbandAsrc`、`FourXHalfbandAsrc`を`FORMAT` genericと`FixedPointPort::<FORMAT>` stream portへ移行し、既定formatをQ2.23へ変更
+- 内部FIFO・補間windowは`FORMAT::Raw`で保持し、public streamのformat境界だけをinterfaceで検査する構成へ整理
+- fixed-rate benchmarkは既存の32bit raw条件を維持しつつ、halfband ASRC経路へQ1.31 interfaceを明示するよう更新
+
 ## [0.2.0] - 2026-08-02
 
 ### Added

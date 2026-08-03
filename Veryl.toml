@@ -1,6 +1,6 @@
 [project]
 name = "gndless_sample_rate_conversion"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Akiyuki Okayasu"]
 description = "Synchronous and asynchronous sample-rate converters for Veryl."
 license = "MIT OR Apache-2.0"
@@ -13,10 +13,10 @@ target = { type = "directory", path = "target" }
 [test]
 
 [dependencies]
-gndless_fixedpoint = { github = "AkiyukiOkayasu/gndless-fixedpoint-veryl", version = "0.1.0" }
-gndless_interpolation = { github = "AkiyukiOkayasu/gndless-interpolation-veryl", version = "0.1.0" }
+gndless_fixedpoint = { path = "../gndless-fixedpoint-veryl" }
+gndless_interpolation = { path = "../gndless-interpolation-veryl" }
 gndless_nco = { github = "AkiyukiOkayasu/gndless-nco-veryl", version = "0.1.0" }
-gndless_filter = { github = "AkiyukiOkayasu/gndless-filter-veryl", version = "0.1.0" }
+gndless_filter = { path = "../gndless-filter-veryl" }
 
 [publish]
 register = true

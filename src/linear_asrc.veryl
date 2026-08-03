@@ -20,8 +20,8 @@
 ///   ]
 /// }
 /// ```
-pub module LinearAsrc #(
-    param SAMPLE_WIDTH: u32 = 32, /// 入出力サンプルの符号付きビット幅
+module LinearAsrcCore #(
+    param SAMPLE_WIDTH: u32 = 24, /// 入出力サンプルの符号付きビット幅
     param PHASE_WIDTH : u32 = 32, /// `ratio`の小数部ビット幅
     param INPUT_DEPTH : u32 = 8 , /// 入力FIFOの深さ
 ) (
@@ -70,7 +70,7 @@ pub module LinearAsrc #(
         o_data       : fifo_q          ,
     );
 
-    inst linear_interpolator: gndless_interpolation::LinearInterpolator #(
+    inst linear_interpolator: gndless_interpolation::LinearInterpolatorCore #(
         SAMPLE_WIDTH: SAMPLE_WIDTH,
         PHASE_WIDTH : PHASE_WIDTH ,
     ) (
@@ -157,8 +157,8 @@ pub module LinearAsrc #(
 ///   head: { text: 'Startup, continuous output, and sticky underflow' }
 /// }
 /// ```
-pub module ContinuousLinearAsrc #(
-    param SAMPLE_WIDTH : u32 = 32, /// 入出力サンプルの符号付きビット幅
+module ContinuousLinearAsrcCore #(
+    param SAMPLE_WIDTH : u32 = 24, /// 入出力サンプルの符号付きビット幅
     param PHASE_WIDTH  : u32 = 32, /// 位相入力のビット幅
     param INPUT_DEPTH  : u32 = 8 , /// 入力FIFOの深さ
     param STARTUP_LEVEL: u32 = 1 , /// 出力開始に必要な未消費FIFOワード数
@@ -208,7 +208,7 @@ pub module ContinuousLinearAsrc #(
         o_data       : fifo_q          ,
     );
 
-    inst linear_interpolator: gndless_interpolation::LinearInterpolator #(
+    inst linear_interpolator: gndless_interpolation::LinearInterpolatorCore #(
         SAMPLE_WIDTH: SAMPLE_WIDTH,
         PHASE_WIDTH : PHASE_WIDTH ,
     ) (
@@ -267,6 +267,78 @@ pub module ContinuousLinearAsrc #(
     }
 }
 
+/// format付きstream interfaceを使う分数比線形ASRC
+pub module LinearAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFormat = gndless_fixedpoint::Q2_23> #(
+    param PHASE_WIDTH: u32 = 32, /// `ratio`の小数部bit幅
+    param INPUT_DEPTH: u32 = 8 , /// 入力FIFOの深さ
+) (
+    clk          : input   clock                                                                     ,
+    rst          : input   reset                                                                     ,
+    input_valid  : input   logic                                                                     ,
+    input_ready  : output  logic                                                                     ,
+    input_sample : modport gndless_fixedpoint::FixedPointPort::<FORMAT>::input_port                  ,
+    output_tick  : input   logic                                                                     ,
+    output_ready : output  logic                                                                     ,
+    output_valid : output  logic                                                                     ,
+    output_sample: modport gndless_fixedpoint::FixedPointPort::<FORMAT>::output_port                 ,
+    ratio        : input   logic                                                    <PHASE_WIDTH + 2>,
+) {
+    inst core: LinearAsrcCore #(
+        SAMPLE_WIDTH: FORMAT::WIDTH,
+        PHASE_WIDTH : PHASE_WIDTH  ,
+        INPUT_DEPTH : INPUT_DEPTH  ,
+    ) (
+        clk                             ,
+        rst                             ,
+        input_valid                     ,
+        input_ready                     ,
+        input_sample : input_sample.raw ,
+        output_tick                     ,
+        output_ready                    ,
+        output_valid                    ,
+        output_sample: output_sample.raw,
+        ratio                           ,
+    );
+}
+
+/// format付きstream interfaceを使う連続線形ASRC
+pub module ContinuousLinearAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFormat = gndless_fixedpoint::Q2_23> #(
+    param PHASE_WIDTH  : u32 = 32, /// 位相入力のbit幅
+    param INPUT_DEPTH  : u32 = 8 , /// 入力FIFOの深さ
+    param STARTUP_LEVEL: u32 = 1 , /// 出力開始に必要な未消費FIFO word数
+) (
+    clk          : input   clock                                                                             ,
+    rst          : input   reset                                                                             ,
+    input_valid  : input   bbool                                                                             ,
+    input_ready  : output  bbool                                                                             ,
+    input_sample : modport gndless_fixedpoint::FixedPointPort::<FORMAT>::input_port                          ,
+    input_level  : output  logic                                                    <$clog2(INPUT_DEPTH + 1)>,
+    phase        : input   logic                                                    <PHASE_WIDTH>            ,
+    advance      : input   bbool                                                                             ,
+    output_active: output  bbool                                                                             ,
+    output_sample: modport gndless_fixedpoint::FixedPointPort::<FORMAT>::output_port                         ,
+    underflow    : output  bbool                                                                             ,
+) {
+    inst core: ContinuousLinearAsrcCore #(
+        SAMPLE_WIDTH : FORMAT::WIDTH,
+        PHASE_WIDTH  : PHASE_WIDTH  ,
+        INPUT_DEPTH  : INPUT_DEPTH  ,
+        STARTUP_LEVEL: STARTUP_LEVEL,
+    ) (
+        clk                             ,
+        rst                             ,
+        input_valid                     ,
+        input_ready                     ,
+        input_sample : input_sample.raw ,
+        input_level                     ,
+        phase                           ,
+        advance                         ,
+        output_active                   ,
+        output_sample: output_sample.raw,
+        underflow                       ,
+    );
+}
+
 /// 線形補間と分数比sample列変換を検証
 #[test(test_linear_asrc)]
 module test_linear_asrc {
@@ -289,7 +361,7 @@ module test_linear_asrc {
     var output_sample: signed logic<SAMPLE_WIDTH>   ;
     var ratio        : logic       <PHASE_WIDTH + 2>;
 
-    inst linear_interpolator: gndless_interpolation::LinearInterpolator #(
+    inst linear_interpolator: gndless_interpolation::LinearInterpolatorCore #(
         SAMPLE_WIDTH: SAMPLE_WIDTH,
         PHASE_WIDTH : PHASE_WIDTH ,
     ) (
@@ -299,7 +371,7 @@ module test_linear_asrc {
         sample : interpolated,
     );
 
-    inst asrc: LinearAsrc #(
+    inst asrc: LinearAsrcCore #(
         SAMPLE_WIDTH: SAMPLE_WIDTH,
         PHASE_WIDTH : PHASE_WIDTH ,
         INPUT_DEPTH : 4           ,
@@ -390,7 +462,7 @@ module test_continuous_linear_asrc {
         advance                      ,
     );
 
-    inst asrc: ContinuousLinearAsrc #(
+    inst asrc: ContinuousLinearAsrcCore #(
         SAMPLE_WIDTH: SAMPLE_WIDTH,
         PHASE_WIDTH : PHASE_WIDTH ,
         INPUT_DEPTH : 8           ,

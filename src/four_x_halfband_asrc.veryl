@@ -23,37 +23,37 @@
 ///   head: { text: '4x burst pipeline and continuous-output startup (not to scale)' }
 /// }
 /// ```
-pub module FourXHalfbandAsrc #(
-    param SAMPLE_WIDTH: u32 = 32, /// 入出力サンプルの符号付きビット幅
-    param PHASE_WIDTH : u32 = 32, /// 位相入力のビット幅
-    param INPUT_DEPTH : u32 = 8 , /// 出力側入力FIFOの深さ
+pub module FourXHalfbandAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFormat = gndless_fixedpoint::Q2_23> #(
+    param PHASE_WIDTH: u32 = 32, /// 位相入力のビット幅
+    param INPUT_DEPTH: u32 = 8 , /// 出力側入力FIFOの深さ
 ) (
-    clk            : input  clock                                , /// システムクロック
-    rst            : input  reset                                , /// リセット
-    input_valid    : input  bbool                                , /// 入力サンプル有効
-    input_ready    : output bbool                                , /// 入力受理可能
-    input_sample   : input  signed logic<SAMPLE_WIDTH>           , /// 入力サンプル
-    phase_increment: input  logic       <PHASE_WIDTH>            , /// 毎クロックの位相増分
-    output_active  : output bbool                                , /// 連続出力が有効
-    output_sample  : output signed logic<SAMPLE_WIDTH>           , /// 補間後の出力サンプル
-    input_level    : output logic       <$clog2(INPUT_DEPTH + 1)>, /// 入力FIFOのワード数
-    underflow      : output bbool                                , /// 入力不足のstickyフラグ
+    clk            : input   clock                                                                             , /// システムクロック
+    rst            : input   reset                                                                             , /// リセット
+    input_valid    : input   bbool                                                                             , /// 入力サンプル有効
+    input_ready    : output  bbool                                                                             , /// 入力受理可能
+    input_sample   : modport gndless_fixedpoint::FixedPointPort::<FORMAT>::input_port                          , /// 入力sample
+    phase_increment: input   logic                                                    <PHASE_WIDTH>            , /// 毎クロックの位相増分
+    output_active  : output  bbool                                                                             , /// 連続出力が有効
+    output_sample  : modport gndless_fixedpoint::FixedPointPort::<FORMAT>::output_port                         , /// 補間後の出力sample
+    input_level    : output  logic                                                    <$clog2(INPUT_DEPTH + 1)>, /// 入力FIFOのワード数
+    underflow      : output  bbool                                                                             , /// 入力不足のstickyフラグ
 ) {
     var phase       : logic<PHASE_WIDTH>;
     var advance     : bbool             ;
     var phase_enable: bbool             ;
 
-    var first_input_ready  : bbool                     ;
-    var first_output_valid : bbool                     ;
-    var first_output_ready : bbool                     ;
-    var first_output_sample: signed logic<SAMPLE_WIDTH>;
+    var first_input_ready : bbool;
+    var first_output_valid: bbool;
+    var first_output_ready: bbool;
 
-    var second_input_ready  : bbool                     ;
-    var second_output_valid : bbool                     ;
-    var second_output_ready : bbool                     ;
-    var second_output_sample: signed logic<SAMPLE_WIDTH>;
+    var second_input_ready : bbool;
+    var second_output_valid: bbool;
+    var second_output_ready: bbool;
 
     var asrc_input_ready: bbool;
+
+    inst first_output_sample : gndless_fixedpoint::FixedPointPort::<FORMAT>;
+    inst second_output_sample: gndless_fixedpoint::FixedPointPort::<FORMAT>;
 
     inst phase_accumulator: gndless_nco::FractionalPhaseAccumulator #(
         WIDTH: PHASE_WIDTH,
@@ -66,9 +66,8 @@ pub module FourXHalfbandAsrc #(
         advance                      ,
     );
 
-    inst first_halfband: gndless_filter::HalfbandInterpolator2x #(
-        SAMPLE_WIDTH   : SAMPLE_WIDTH,
-        COEFFICIENT_SET: 1           ,
+    inst first_halfband: gndless_filter::HalfbandInterpolator2x::<FORMAT> #(
+        COEFFICIENT_SET: 1,
     ) (
         clk                               ,
         rst                               ,
@@ -80,9 +79,8 @@ pub module FourXHalfbandAsrc #(
         output_sample: first_output_sample,
     );
 
-    inst second_halfband: gndless_filter::HalfbandInterpolator2x #(
-        SAMPLE_WIDTH   : SAMPLE_WIDTH,
-        COEFFICIENT_SET: 2           ,
+    inst second_halfband: gndless_filter::HalfbandInterpolator2x::<FORMAT> #(
+        COEFFICIENT_SET: 2,
     ) (
         clk                                ,
         rst                                ,
@@ -94,11 +92,10 @@ pub module FourXHalfbandAsrc #(
         output_sample: second_output_sample,
     );
 
-    inst continuous_asrc: ContinuousLinearAsrc #(
-        SAMPLE_WIDTH : SAMPLE_WIDTH,
-        PHASE_WIDTH  : PHASE_WIDTH ,
-        INPUT_DEPTH  : INPUT_DEPTH ,
-        STARTUP_LEVEL: 6           ,
+    inst continuous_asrc: ContinuousLinearAsrc::<FORMAT> #(
+        PHASE_WIDTH  : PHASE_WIDTH,
+        INPUT_DEPTH  : INPUT_DEPTH,
+        STARTUP_LEVEL: 6          ,
     ) (
         clk                                ,
         rst                                ,
@@ -128,19 +125,18 @@ module test_four_x_halfband_asrc {
     inst clk: $tb::clock_gen;
     inst rst: $tb::reset_gen ( clk );
 
-    var input_valid    : bbool           ;
-    var input_ready    : bbool           ;
-    var input_sample   : signed logic<16>;
-    var phase_increment: logic       <32>;
-    var output_active  : bbool           ;
-    var output_sample  : signed logic<16>;
-    var input_level    : logic       <4> ;
-    var underflow      : bbool           ;
+    var input_valid: bbool;
+    var input_ready: bbool;
+    inst input_sample: gndless_fixedpoint::FixedPointPort::<gndless_fixedpoint::SignedFixedPointFormatOf::<16, 15>>;
+    var phase_increment: logic<32>;
+    var output_active  : bbool    ;
+    inst output_sample: gndless_fixedpoint::FixedPointPort::<gndless_fixedpoint::SignedFixedPointFormatOf::<16, 15>>;
+    var input_level: logic<4>;
+    var underflow  : bbool   ;
 
-    inst dut: FourXHalfbandAsrc #(
-        SAMPLE_WIDTH: SAMPLE_WIDTH,
-        PHASE_WIDTH : PHASE_WIDTH ,
-        INPUT_DEPTH : 8           ,
+    inst dut: FourXHalfbandAsrc::<gndless_fixedpoint::SignedFixedPointFormatOf::<16, 15>> #(
+        PHASE_WIDTH: PHASE_WIDTH,
+        INPUT_DEPTH: 8          ,
     ) (
         clk              ,
         rst              ,
@@ -155,9 +151,9 @@ module test_four_x_halfband_asrc {
     );
 
     initial {
-        input_valid     = false;
-        input_sample    = 16'sd1000;
-        phase_increment = 0;
+        input_valid      = false;
+        input_sample.raw = 16'sd1000;
+        phase_increment  = 0;
         rst.assert();
 
         // 位相を止めた状態で2入力分の4サンプルburstをFIFOへ蓄積する

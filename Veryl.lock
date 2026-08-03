@@ -3,68 +3,6 @@
 version = 1
 
 [[projects]]
-name = "gndless_filter"
-
-[projects.source]
-uuid = "eb47c18f-ee89-528b-80f0-fdae2f02971a"
-url = "https://github.com/AkiyukiOkayasu/gndless-filter-veryl"
-path = ""
-project = "gndless_filter"
-version = "0.1.0"
-revision = "6e483df243709fbb8e39b63d5fed19bb29d4e941"
-
-[projects.properties]
-
-[[projects.dependencies]]
-name = "gndless_fixedpoint"
-
-[projects.dependencies.source]
-uuid = "f1b9fe28-7740-559e-b221-46bee01da60c"
-url = "https://github.com/AkiyukiOkayasu/gndless-fixedpoint-veryl"
-path = ""
-project = "gndless_fixedpoint"
-version = "0.1.0"
-revision = "db96e9a844be365019faacca543a44188564024c"
-
-[[projects]]
-name = "gndless_fixedpoint"
-dependencies = []
-
-[projects.source]
-uuid = "f1b9fe28-7740-559e-b221-46bee01da60c"
-url = "https://github.com/AkiyukiOkayasu/gndless-fixedpoint-veryl"
-path = ""
-project = "gndless_fixedpoint"
-version = "0.1.0"
-revision = "db96e9a844be365019faacca543a44188564024c"
-
-[projects.properties]
-
-[[projects]]
-name = "gndless_interpolation"
-
-[projects.source]
-uuid = "34c47fc8-e0ab-5390-aea5-170f2dfbc05d"
-url = "https://github.com/AkiyukiOkayasu/gndless-interpolation-veryl"
-path = ""
-project = "gndless_interpolation"
-version = "0.1.0"
-revision = "0c3d49c5f67246d3c0d3744832c66f4857780ae3"
-
-[projects.properties]
-
-[[projects.dependencies]]
-name = "gndless_fixedpoint"
-
-[projects.dependencies.source]
-uuid = "f1b9fe28-7740-559e-b221-46bee01da60c"
-url = "https://github.com/AkiyukiOkayasu/gndless-fixedpoint-veryl"
-path = ""
-project = "gndless_fixedpoint"
-version = "0.1.0"
-revision = "db96e9a844be365019faacca543a44188564024c"
-
-[[projects]]
 name = "gndless_nco"
 dependencies = []
 
@@ -77,3 +15,30 @@ version = "0.1.0"
 revision = "23b602972ab07aa2fb7596590367d2caa125bddb"
 
 [projects.properties]
+
+[[projects]]
+name = "gndless_filter"
+source = "../gndless-filter-veryl"
+
+[projects.properties]
+
+[[projects.dependencies]]
+name = "gndless_fixedpoint"
+source = "../gndless-fixedpoint-veryl"
+
+[[projects]]
+name = "gndless_fixedpoint"
+source = "../gndless-fixedpoint-veryl"
+dependencies = []
+
+[projects.properties]
+
+[[projects]]
+name = "gndless_interpolation"
+source = "../gndless-interpolation-veryl"
+
+[projects.properties]
+
+[[projects.dependencies]]
+name = "gndless_fixedpoint"
+source = "../gndless-fixedpoint-veryl"

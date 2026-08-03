@@ -13,32 +13,32 @@
 /// HBFはナイキスト付近のスペクトルイメージ成分を抑えるため、短いset2ではなくset1を使う。
 /// `STARTUP_LEVEL`までFIFOを満たしてから出力を開始し、入力欠落は`underflow`へ
 /// stickyに記録する。
-pub module TwoXHalfbandAsrc #(
-    param SAMPLE_WIDTH: u32 = 32, /// 入出力サンプルの符号付きビット幅
-    param PHASE_WIDTH : u32 = 32, /// 入力レート基準の位相増分幅
-    param INPUT_DEPTH : u32 = 8 , /// 線形ASRC FIFOの深さ
+pub module TwoXHalfbandAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFormat = gndless_fixedpoint::Q2_23> #(
+    param PHASE_WIDTH: u32 = 32, /// 入力レート基準の位相増分幅
+    param INPUT_DEPTH: u32 = 8 , /// 線形ASRC FIFOの深さ
 ) (
-    clk            : input  clock                                , /// システムクロック
-    rst            : input  reset                                , /// リセット
-    input_valid    : input  bbool                                , /// 入力サンプル有効
-    input_ready    : output bbool                                , /// 入力受理可能
-    input_sample   : input  signed logic<SAMPLE_WIDTH>           , /// 入力サンプル
-    phase_increment: input  logic       <PHASE_WIDTH>            , /// 入力レート基準のQ0位相増分
-    output_active  : output bbool                                , /// 連続出力が有効
-    output_sample  : output signed logic<SAMPLE_WIDTH>           , /// 補間後の出力サンプル
-    input_level    : output logic       <$clog2(INPUT_DEPTH + 1)>, /// ASRC FIFOのワード数
-    underflow      : output bbool                                , /// 入力不足のstickyフラグ
+    clk            : input   clock                                                                             , /// システムクロック
+    rst            : input   reset                                                                             , /// リセット
+    input_valid    : input   bbool                                                                             , /// 入力サンプル有効
+    input_ready    : output  bbool                                                                             , /// 入力受理可能
+    input_sample   : modport gndless_fixedpoint::FixedPointPort::<FORMAT>::input_port                          , /// 入力sample
+    phase_increment: input   logic                                                    <PHASE_WIDTH>            , /// 入力レート基準のQ0位相増分
+    output_active  : output  bbool                                                                             , /// 連続出力が有効
+    output_sample  : modport gndless_fixedpoint::FixedPointPort::<FORMAT>::output_port                         , /// 補間後の出力sample
+    input_level    : output  logic                                                    <$clog2(INPUT_DEPTH + 1)>, /// ASRC FIFOのワード数
+    underflow      : output  bbool                                                                             , /// 入力不足のstickyフラグ
 ) {
     var phase                      : logic<PHASE_WIDTH>;
     var advance                    : bbool             ;
     var phase_enable               : bbool             ;
     var oversampled_phase_increment: logic<PHASE_WIDTH>;
 
-    var halfband_input_ready  : bbool                     ;
-    var halfband_output_valid : bbool                     ;
-    var halfband_output_ready : bbool                     ;
-    var halfband_output_sample: signed logic<SAMPLE_WIDTH>;
-    var asrc_input_ready      : bbool                     ;
+    var halfband_input_ready : bbool;
+    var halfband_output_valid: bbool;
+    var halfband_output_ready: bbool;
+    var asrc_input_ready     : bbool;
+
+    inst halfband_output_sample: gndless_fixedpoint::FixedPointPort::<FORMAT>;
 
     // 2倍補間後のサンプル列は入力列の2倍の速度なので、NCOの進行も2倍にする。
     assign oversampled_phase_increment = phase_increment << 1;
@@ -54,9 +54,8 @@ pub module TwoXHalfbandAsrc #(
         advance                                     ,
     );
 
-    inst halfband: gndless_filter::HalfbandInterpolator2x #(
-        SAMPLE_WIDTH   : SAMPLE_WIDTH,
-        COEFFICIENT_SET: 1           ,
+    inst halfband: gndless_filter::HalfbandInterpolator2x::<FORMAT> #(
+        COEFFICIENT_SET: 1,
     ) (
         clk                                  ,
         rst                                  ,
@@ -68,11 +67,10 @@ pub module TwoXHalfbandAsrc #(
         output_sample: halfband_output_sample,
     );
 
-    inst continuous_asrc: ContinuousLinearAsrc #(
-        SAMPLE_WIDTH : SAMPLE_WIDTH,
-        PHASE_WIDTH  : PHASE_WIDTH ,
-        INPUT_DEPTH  : INPUT_DEPTH ,
-        STARTUP_LEVEL: 6           ,
+    inst continuous_asrc: ContinuousLinearAsrc::<FORMAT> #(
+        PHASE_WIDTH  : PHASE_WIDTH,
+        INPUT_DEPTH  : INPUT_DEPTH,
+        STARTUP_LEVEL: 6          ,
     ) (
         clk                                  ,
         rst                                  ,
@@ -101,19 +99,18 @@ module test_two_x_halfband_asrc {
     inst clk: $tb::clock_gen;
     inst rst: $tb::reset_gen ( clk );
 
-    var input_valid    : bbool           ;
-    var input_ready    : bbool           ;
-    var input_sample   : signed logic<16>;
-    var phase_increment: logic       <32>;
-    var output_active  : bbool           ;
-    var output_sample  : signed logic<16>;
-    var input_level    : logic       <4> ;
-    var underflow      : bbool           ;
+    var input_valid: bbool;
+    var input_ready: bbool;
+    inst input_sample: gndless_fixedpoint::FixedPointPort::<gndless_fixedpoint::SignedFixedPointFormatOf::<16, 15>>;
+    var phase_increment: logic<32>;
+    var output_active  : bbool    ;
+    inst output_sample: gndless_fixedpoint::FixedPointPort::<gndless_fixedpoint::SignedFixedPointFormatOf::<16, 15>>;
+    var input_level: logic<4>;
+    var underflow  : bbool   ;
 
-    inst dut: TwoXHalfbandAsrc #(
-        SAMPLE_WIDTH: SAMPLE_WIDTH,
-        PHASE_WIDTH : PHASE_WIDTH ,
-        INPUT_DEPTH : 8           ,
+    inst dut: TwoXHalfbandAsrc::<gndless_fixedpoint::SignedFixedPointFormatOf::<16, 15>> #(
+        PHASE_WIDTH: PHASE_WIDTH,
+        INPUT_DEPTH: 8          ,
     ) (
         clk              ,
         rst              ,
@@ -128,16 +125,16 @@ module test_two_x_halfband_asrc {
     );
 
     initial {
-        input_valid     = false;
-        input_sample    = 16'sd1000;
-        phase_increment = 0;
+        input_valid      = false;
+        input_sample.raw = 16'sd1000;
+        phase_increment  = 0;
         rst.assert();
 
         // 2サンプルburstを4回送ると、8ワード中6ワードが未消費になる。
         for i in 0..4 {
             $assert(input_ready, "2x ASRC must accept each input");
-            input_valid  = true;
-            input_sample = 16'sd1000 + (i as 16);
+            input_valid      = true;
+            input_sample.raw = 16'sd1000 + (i as 16);
             clk.next(1);
             input_valid = false;
             clk.next(80);

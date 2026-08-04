@@ -1,6 +1,6 @@
 [project]
 name = "gndless_sample_rate_conversion"
-version = "0.3.0"
+version = "0.2.0"
 authors = ["Akiyuki Okayasu"]
 description = "Synchronous and asynchronous sample-rate converters for Veryl."
 license = "MIT OR Apache-2.0"

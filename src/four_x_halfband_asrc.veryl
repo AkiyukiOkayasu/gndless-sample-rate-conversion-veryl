@@ -27,16 +27,16 @@ pub module FourXHalfbandAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointForma
     param PHASE_WIDTH: u32 = 32, /// 位相入力のビット幅
     param INPUT_DEPTH: u32 = 8 , /// 出力側入力FIFOの深さ
 ) (
-    clk            : input   clock                                                                             , /// システムクロック
-    rst            : input   reset                                                                             , /// リセット
-    input_valid    : input   bbool                                                                             , /// 入力サンプル有効
-    input_ready    : output  bbool                                                                             , /// 入力受理可能
-    input_sample   : modport gndless_fixedpoint::FixedPointPort::<FORMAT>::input_port                          , /// 入力sample
-    phase_increment: input   logic                                                    <PHASE_WIDTH>            , /// 毎クロックの位相増分
-    output_active  : output  bbool                                                                             , /// 連続出力が有効
-    output_sample  : modport gndless_fixedpoint::FixedPointPort::<FORMAT>::output_port                         , /// 補間後の出力sample
-    input_level    : output  logic                                                    <$clog2(INPUT_DEPTH + 1)>, /// 入力FIFOのワード数
-    underflow      : output  bbool                                                                             , /// 入力不足のstickyフラグ
+    clk            : input   clock                                                                              , /// システムクロック
+    rst            : input   reset                                                                              , /// リセット
+    input_valid    : input   bbool                                                                              , /// 入力サンプル有効
+    input_ready    : output  bbool                                                                              , /// 入力受理可能
+    input_sample   : modport gndless_fixedpoint::FixedPointValue::<FORMAT>::input_port                          , /// 入力sample
+    phase_increment: input   logic                                                     <PHASE_WIDTH>            , /// 毎クロックの位相増分
+    output_active  : output  bbool                                                                              , /// 連続出力が有効
+    output_sample  : modport gndless_fixedpoint::FixedPointValue::<FORMAT>::output_port                         , /// 補間後の出力sample
+    input_level    : output  logic                                                     <$clog2(INPUT_DEPTH + 1)>, /// 入力FIFOのワード数
+    underflow      : output  bbool                                                                              , /// 入力不足のstickyフラグ
 ) {
     var phase       : logic<PHASE_WIDTH>;
     var advance     : bbool             ;
@@ -52,8 +52,8 @@ pub module FourXHalfbandAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointForma
 
     var asrc_input_ready: bbool;
 
-    inst first_output_sample : gndless_fixedpoint::FixedPointPort::<FORMAT>;
-    inst second_output_sample: gndless_fixedpoint::FixedPointPort::<FORMAT>;
+    inst first_output_sample : gndless_fixedpoint::FixedPointValue::<FORMAT>;
+    inst second_output_sample: gndless_fixedpoint::FixedPointValue::<FORMAT>;
 
     inst phase_accumulator: gndless_nco::FractionalPhaseAccumulator #(
         WIDTH: PHASE_WIDTH,
@@ -127,10 +127,10 @@ module test_four_x_halfband_asrc {
 
     var input_valid: bbool;
     var input_ready: bbool;
-    inst input_sample: gndless_fixedpoint::FixedPointPort::<gndless_fixedpoint::SignedFixedPointFormatOf::<16, 15>>;
+    inst input_sample: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::SignedFixedPointFormatOf::<16, 15>>;
     var phase_increment: logic<32>;
     var output_active  : bbool    ;
-    inst output_sample: gndless_fixedpoint::FixedPointPort::<gndless_fixedpoint::SignedFixedPointFormatOf::<16, 15>>;
+    inst output_sample: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::SignedFixedPointFormatOf::<16, 15>>;
     var input_level: logic<4>;
     var underflow  : bbool   ;
 

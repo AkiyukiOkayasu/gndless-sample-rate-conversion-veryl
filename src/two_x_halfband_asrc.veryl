@@ -17,16 +17,16 @@ pub module TwoXHalfbandAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFormat
     param PHASE_WIDTH: u32 = 32, /// 入力レート基準の位相増分幅
     param INPUT_DEPTH: u32 = 8 , /// 線形ASRC FIFOの深さ
 ) (
-    clk            : input   clock                                                                             , /// システムクロック
-    rst            : input   reset                                                                             , /// リセット
-    input_valid    : input   bbool                                                                             , /// 入力サンプル有効
-    input_ready    : output  bbool                                                                             , /// 入力受理可能
-    input_sample   : modport gndless_fixedpoint::FixedPointPort::<FORMAT>::input_port                          , /// 入力sample
-    phase_increment: input   logic                                                    <PHASE_WIDTH>            , /// 入力レート基準のQ0位相増分
-    output_active  : output  bbool                                                                             , /// 連続出力が有効
-    output_sample  : modport gndless_fixedpoint::FixedPointPort::<FORMAT>::output_port                         , /// 補間後の出力sample
-    input_level    : output  logic                                                    <$clog2(INPUT_DEPTH + 1)>, /// ASRC FIFOのワード数
-    underflow      : output  bbool                                                                             , /// 入力不足のstickyフラグ
+    clk            : input   clock                                                                              , /// システムクロック
+    rst            : input   reset                                                                              , /// リセット
+    input_valid    : input   bbool                                                                              , /// 入力サンプル有効
+    input_ready    : output  bbool                                                                              , /// 入力受理可能
+    input_sample   : modport gndless_fixedpoint::FixedPointValue::<FORMAT>::input_port                          , /// 入力sample
+    phase_increment: input   logic                                                     <PHASE_WIDTH>            , /// 入力レート基準のQ0位相増分
+    output_active  : output  bbool                                                                              , /// 連続出力が有効
+    output_sample  : modport gndless_fixedpoint::FixedPointValue::<FORMAT>::output_port                         , /// 補間後の出力sample
+    input_level    : output  logic                                                     <$clog2(INPUT_DEPTH + 1)>, /// ASRC FIFOのワード数
+    underflow      : output  bbool                                                                              , /// 入力不足のstickyフラグ
 ) {
     var phase                      : logic<PHASE_WIDTH>;
     var advance                    : bbool             ;
@@ -38,7 +38,7 @@ pub module TwoXHalfbandAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFormat
     var halfband_output_ready: bbool;
     var asrc_input_ready     : bbool;
 
-    inst halfband_output_sample: gndless_fixedpoint::FixedPointPort::<FORMAT>;
+    inst halfband_output_sample: gndless_fixedpoint::FixedPointValue::<FORMAT>;
 
     // 2倍補間後のサンプル列は入力列の2倍の速度なので、NCOの進行も2倍にする。
     assign oversampled_phase_increment = phase_increment << 1;
@@ -101,10 +101,10 @@ module test_two_x_halfband_asrc {
 
     var input_valid: bbool;
     var input_ready: bbool;
-    inst input_sample: gndless_fixedpoint::FixedPointPort::<gndless_fixedpoint::SignedFixedPointFormatOf::<16, 15>>;
+    inst input_sample: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::SignedFixedPointFormatOf::<16, 15>>;
     var phase_increment: logic<32>;
     var output_active  : bbool    ;
-    inst output_sample: gndless_fixedpoint::FixedPointPort::<gndless_fixedpoint::SignedFixedPointFormatOf::<16, 15>>;
+    inst output_sample: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::SignedFixedPointFormatOf::<16, 15>>;
     var input_level: logic<4>;
     var underflow  : bbool   ;
 

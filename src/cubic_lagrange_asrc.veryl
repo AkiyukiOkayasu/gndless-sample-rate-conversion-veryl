@@ -150,21 +150,21 @@ module CubicLagrangeAsrcCore #(
     }
 }
 
-/// format付きstream interfaceを使うCubic Lagrange ASRC
+/// format付きvalue interfaceを使うCubic Lagrange ASRC
 pub module CubicLagrangeAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFormat = gndless_fixedpoint::Q2_23> #(
     param PHASE_WIDTH: u32 = 32, /// `ratio`の小数部bit幅
     param INPUT_DEPTH: u32 = 8 , /// 入力FIFOの深さ
 ) (
-    clk          : input   clock                                                                     ,
-    rst          : input   reset                                                                     ,
-    input_valid  : input   logic                                                                     ,
-    input_ready  : output  logic                                                                     ,
-    input_sample : modport gndless_fixedpoint::FixedPointPort::<FORMAT>::input_port                  ,
-    output_tick  : input   logic                                                                     ,
-    output_ready : output  logic                                                                     ,
-    output_valid : output  logic                                                                     ,
-    output_sample: modport gndless_fixedpoint::FixedPointPort::<FORMAT>::output_port                 ,
-    ratio        : input   logic                                                    <PHASE_WIDTH + 2>,
+    clk          : input   clock                                                                      ,
+    rst          : input   reset                                                                      ,
+    input_valid  : input   logic                                                                      ,
+    input_ready  : output  logic                                                                      ,
+    input_sample : modport gndless_fixedpoint::FixedPointValue::<FORMAT>::input_port                  ,
+    output_tick  : input   logic                                                                      ,
+    output_ready : output  logic                                                                      ,
+    output_valid : output  logic                                                                      ,
+    output_sample: modport gndless_fixedpoint::FixedPointValue::<FORMAT>::output_port                 ,
+    ratio        : input   logic                                                     <PHASE_WIDTH + 2>,
 ) {
     inst core: CubicLagrangeAsrcCore #(
         SAMPLE_WIDTH: FORMAT::WIDTH,

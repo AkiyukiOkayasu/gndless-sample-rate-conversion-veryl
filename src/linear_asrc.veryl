@@ -267,21 +267,21 @@ module ContinuousLinearAsrcCore #(
     }
 }
 
-/// format付きstream interfaceを使う分数比線形ASRC
+/// format付きvalue interfaceを使う分数比線形ASRC
 pub module LinearAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFormat = gndless_fixedpoint::Q2_23> #(
     param PHASE_WIDTH: u32 = 32, /// `ratio`の小数部bit幅
     param INPUT_DEPTH: u32 = 8 , /// 入力FIFOの深さ
 ) (
-    clk          : input   clock                                                                     ,
-    rst          : input   reset                                                                     ,
-    input_valid  : input   logic                                                                     ,
-    input_ready  : output  logic                                                                     ,
-    input_sample : modport gndless_fixedpoint::FixedPointPort::<FORMAT>::input_port                  ,
-    output_tick  : input   logic                                                                     ,
-    output_ready : output  logic                                                                     ,
-    output_valid : output  logic                                                                     ,
-    output_sample: modport gndless_fixedpoint::FixedPointPort::<FORMAT>::output_port                 ,
-    ratio        : input   logic                                                    <PHASE_WIDTH + 2>,
+    clk          : input   clock                                                                      ,
+    rst          : input   reset                                                                      ,
+    input_valid  : input   logic                                                                      ,
+    input_ready  : output  logic                                                                      ,
+    input_sample : modport gndless_fixedpoint::FixedPointValue::<FORMAT>::input_port                  ,
+    output_tick  : input   logic                                                                      ,
+    output_ready : output  logic                                                                      ,
+    output_valid : output  logic                                                                      ,
+    output_sample: modport gndless_fixedpoint::FixedPointValue::<FORMAT>::output_port                 ,
+    ratio        : input   logic                                                     <PHASE_WIDTH + 2>,
 ) {
     inst core: LinearAsrcCore #(
         SAMPLE_WIDTH: FORMAT::WIDTH,
@@ -301,23 +301,23 @@ pub module LinearAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFormat = gnd
     );
 }
 
-/// format付きstream interfaceを使う連続線形ASRC
+/// format付きvalue interfaceを使う連続線形ASRC
 pub module ContinuousLinearAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFormat = gndless_fixedpoint::Q2_23> #(
     param PHASE_WIDTH  : u32 = 32, /// 位相入力のbit幅
     param INPUT_DEPTH  : u32 = 8 , /// 入力FIFOの深さ
     param STARTUP_LEVEL: u32 = 1 , /// 出力開始に必要な未消費FIFO word数
 ) (
-    clk          : input   clock                                                                             ,
-    rst          : input   reset                                                                             ,
-    input_valid  : input   bbool                                                                             ,
-    input_ready  : output  bbool                                                                             ,
-    input_sample : modport gndless_fixedpoint::FixedPointPort::<FORMAT>::input_port                          ,
-    input_level  : output  logic                                                    <$clog2(INPUT_DEPTH + 1)>,
-    phase        : input   logic                                                    <PHASE_WIDTH>            ,
-    advance      : input   bbool                                                                             ,
-    output_active: output  bbool                                                                             ,
-    output_sample: modport gndless_fixedpoint::FixedPointPort::<FORMAT>::output_port                         ,
-    underflow    : output  bbool                                                                             ,
+    clk          : input   clock                                                                              ,
+    rst          : input   reset                                                                              ,
+    input_valid  : input   bbool                                                                              ,
+    input_ready  : output  bbool                                                                              ,
+    input_sample : modport gndless_fixedpoint::FixedPointValue::<FORMAT>::input_port                          ,
+    input_level  : output  logic                                                     <$clog2(INPUT_DEPTH + 1)>,
+    phase        : input   logic                                                     <PHASE_WIDTH>            ,
+    advance      : input   bbool                                                                              ,
+    output_active: output  bbool                                                                              ,
+    output_sample: modport gndless_fixedpoint::FixedPointValue::<FORMAT>::output_port                         ,
+    underflow    : output  bbool                                                                              ,
 ) {
     inst core: ContinuousLinearAsrcCore #(
         SAMPLE_WIDTH : FORMAT::WIDTH,

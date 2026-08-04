@@ -17,7 +17,7 @@ module fixed_rate_asrc_benchmark {
 
     var input_valid : bbool                     ;
     var input_sample: signed logic<SAMPLE_WIDTH>;
-    inst halfband_input_sample: gndless_fixedpoint::FixedPointPort::<gndless_fixedpoint::Q1_31>;
+    inst halfband_input_sample: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q1_31>;
 
     var source_phase_increment: logic<PHASE_WIDTH>;
     var source_phase          : logic<PHASE_WIDTH>;
@@ -40,7 +40,7 @@ module fixed_rate_asrc_benchmark {
     var four_output_sample  : signed logic<SAMPLE_WIDTH>;
     var four_input_level    : logic       <4>           ;
     var four_underflow      : bbool                     ;
-    inst four_output_interface: gndless_fixedpoint::FixedPointPort::<gndless_fixedpoint::Q1_31>;
+    inst four_output_interface: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q1_31>;
 
     var two_input_ready    : bbool                     ;
     var two_phase_increment: logic       <PHASE_WIDTH> ;
@@ -48,7 +48,7 @@ module fixed_rate_asrc_benchmark {
     var two_output_sample  : signed logic<SAMPLE_WIDTH>;
     var two_input_level    : logic       <4>           ;
     var two_underflow      : bbool                     ;
-    inst two_output_interface: gndless_fixedpoint::FixedPointPort::<gndless_fixedpoint::Q1_31>;
+    inst two_output_interface: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q1_31>;
 
     var file: $tb::file;
 

@@ -4,6 +4,7 @@
 
 ### Changed
 
+- `gndless_fixedpoint`依存を公開済みの0.2.0へ更新
 - 破壊的変更: `LinearAsrc`、`ContinuousLinearAsrc`、`CubicLagrangeAsrc`、`TwoXHalfbandAsrc`、`FourXHalfbandAsrc`を`FORMAT` genericと`FixedPointValue::<FORMAT>` value interfaceへ移行し、既定formatをQ2.23へ変更
 - 内部FIFO・補間windowは`FORMAT::Raw`で保持し、public valueのformat境界だけをinterfaceで検査する構成へ整理
 - fixed-rate benchmarkは既存の32bit raw条件を維持しつつ、halfband ASRC経路へQ1.31 interfaceを明示するよう更新

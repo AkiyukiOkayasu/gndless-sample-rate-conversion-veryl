@@ -78,7 +78,7 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
         pair_sum         = left + right;
         coefficient      = COEFFICIENT_SET::VALUES[pair_index];
         product          = pair_sum * coefficient;
-        product_ext      = product as ACCUMULATOR_WIDTH;
+        product_ext      = product as ACCUMULATOR_WIDTH;// TODO この拡張大丈夫？？？
         next_accumulator = accumulator + product_ext;
         even_result      = gndless_fixedpoint::resize::<
             ACCUMULATOR_WIDTH                        ,

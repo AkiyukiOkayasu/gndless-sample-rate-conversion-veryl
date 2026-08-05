@@ -41,9 +41,9 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
     import State::*;
 
     var state       : State                                                    ;
-    var history     : gndless_fixedpoint::Q2_23::Raw [CHANNELS, HISTORY_LENGTH];
-    var even_samples: gndless_fixedpoint::Q2_23::Raw [CHANNELS]                ;
-    var odd_samples : gndless_fixedpoint::Q2_23::Raw [CHANNELS]                ;
+    var history     : gndless_fixedpoint::Q3_24::Raw [CHANNELS, HISTORY_LENGTH];
+    var even_samples: gndless_fixedpoint::Q3_24::Raw [CHANNELS]                ;
+    var odd_samples : gndless_fixedpoint::Q3_24::Raw [CHANNELS]                ;
 
     var channel_index: u8                             ;
     var pair_index   : u8                             ;

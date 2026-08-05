@@ -17,6 +17,7 @@ pub package Halfband103Q2_16 for HalfbandCoefficientSet {
     type Value      = gndless_fixedpoint::Q2_16::Raw             ;
     type Values     = Value                          [PAIR_COUNT];
 
+    // TODO センタータップ以外の係数はの絶対値は0.5未満のはずなので、Q1.17の方がよいのでは？？？
     const VALUES: Values = '{
         -18'sd2, 18'sd6, -18'sd12, 18'sd22, -18'sd36, 18'sd55, -18'sd82, 18'sd118, -18'sd165, 18'sd225, -18'sd301,
         18'sd395, -18'sd511, 18'sd653, -18'sd827, 18'sd1038, -18'sd1296, 18'sd1614, -18'sd2011, 18'sd2519, -18'sd3191,

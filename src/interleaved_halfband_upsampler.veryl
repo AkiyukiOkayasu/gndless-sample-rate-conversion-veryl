@@ -10,8 +10,11 @@ import gndless_fixedpoint::Types::{RoundingMode, OverflowMode};
 /// 係数はfull tap列ではなく、halfbandの対称pair係数を実装した
 /// `HalfbandCoefficientSet` packageから受け取る。MAC自体はchannelと係数pairの
 /// 両方向へ時分割共有する。
+///
+/// COEFFICIENT_SETは係数set prototype`HalfbandCoefficientSet`を実装したpackageで、デフォルトは`Halfband103Q2_16`。
+/// Tap数が少ない`Halfband39Q2_16`も用意している。tap数が少ないと周波数特性は悪化するが、MACの処理時間は短くなる。
 pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfband103Q2_16> #(
-    param CHANNELS: u8 = 4, /// 同時に処理するchannel数。1から255まで
+    param CHANNELS: u8 = 2, /// channel数。1つのMACでTDM処理する。ステレオを想定して2をデフォルトとする。
 ) (
     clk           : input   clock                                                                                   , /// system clock
     rst           : input   reset                                                                                   , /// reset

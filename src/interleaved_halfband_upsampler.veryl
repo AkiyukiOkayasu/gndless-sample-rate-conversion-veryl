@@ -2,8 +2,9 @@ import gndless_fixedpoint::Types::{RoundingMode, OverflowMode};
 
 /// 複数channelのframe vectorを1個のMACでTDM処理する2x halfband upsampler。
 ///
-/// sampleはQ2.23、係数はQ2.16に固定する。入力frameは
-/// `input_valid && input_ready`で受理し、処理中は`input_ready`をLowにする。
+/// sampleはQ3.24、係数はQ2.16。24bit PCM想定だが、DSPは27bitを想定しているためguard bitなども含めてQ3.24とする。
+/// 出力はQ3.24のまま。補間によって+/-1.0を超える場合もある。
+/// 入力frameは`input_valid && input_ready`で受理し、処理中は`input_ready`をLowにする。
 /// 出力はeven phase、odd phaseの順にchannel vectorを1回ずつ出力する。
 ///
 /// 係数はfull tap列ではなく、halfbandの対称pair係数を実装した
@@ -16,22 +17,20 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
     rst           : input  reset                                    , /// reset
     input_valid   : input  bbool                                    , /// input frame vector valid
     input_ready   : output bbool                                    , /// input frame vector ready
-    input_samples : input  gndless_fixedpoint::Q2_23::Raw [CHANNELS], /// Q2.23 input frame vector
+    input_samples : input  gndless_fixedpoint::Q3_24::Raw [CHANNELS], /// Q3.24 input frame vector
     output_valid  : output bbool                                    , /// output vector valid
-    output_samples: output gndless_fixedpoint::Q2_23::Raw [CHANNELS], /// Q2.23 output frame vector
+    output_samples: output gndless_fixedpoint::Q3_24::Raw [CHANNELS], /// Q3.24 output frame vector
 ) {
     const HISTORY_LENGTH: u32 = COEFFICIENT_SET::PAIR_COUNT * 2;
     const DELAY         : u32 = COEFFICIENT_SET::PAIR_COUNT - 1;
 
-    // Q2.23のFormatを変更せず、対称pairの加算だけに1bitのguardを追加する。
-    const PAIR_SUM_GUARD_BITS   : u32 = 1;
-    const PAIR_SUM_WIDTH        : u32 = gndless_fixedpoint::Q2_23::WIDTH + PAIR_SUM_GUARD_BITS;
-    const PRODUCT_WIDTH         : u32 = PAIR_SUM_WIDTH + gndless_fixedpoint::Q2_16::WIDTH;
-    const ACCUMULATOR_GUARD_BITS: u32 = 2;
-    const ACCUMULATOR_WIDTH     : u32 = PRODUCT_WIDTH + $clog2(COEFFICIENT_SET::PAIR_COUNT) + ACCUMULATOR_GUARD_BITS;
-    const INPUT_FRAC            : u32 = gndless_fixedpoint::Q2_23::FRACTION_BITS
-        + gndless_fixedpoint::Q2_16::FRACTION_BITS;
-    const OUTPUT_FRAC           : u32 = gndless_fixedpoint::Q2_23::FRACTION_BITS;
+    /// 乗算器の出力幅: 入力幅+係数幅
+    const PRODUCT_WIDTH: u8 = gndless_fixedpoint::Q3_24::WIDTH + gndless_fixedpoint::Q2_16::WIDTH;
+
+    const ACCUMULATOR_WIDTH: u8 = PRODUCT_WIDTH + $clog2(COEFFICIENT_SET::PAIR_COUNT) + 2; // 2は加算でのオーバーフローを考慮したguard bit
+
+    const INPUT_FRAC : u8 = gndless_fixedpoint::Q3_24::FRACTION_BITS + gndless_fixedpoint::Q2_16::FRACTION_BITS;
+    const OUTPUT_FRAC: u8 = gndless_fixedpoint::Q3_24::FRACTION_BITS;
 
     enum State {
         Idle,
@@ -41,13 +40,14 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
     }
     import State::*;
 
-    var state        : State                                                                       ;
-    var history      : gndless_fixedpoint::Q2_23::Raw                    [CHANNELS, HISTORY_LENGTH];
-    var even_samples : gndless_fixedpoint::Q2_23::Raw                    [CHANNELS]                ;
-    var odd_samples  : gndless_fixedpoint::Q2_23::Raw                    [CHANNELS]                ;
-    var channel_index: u8                                                                          ;
-    var pair_index   : u8                                                                          ;
-    var accumulator  : signed logic                  <ACCUMULATOR_WIDTH>                           ;
+    var state       : State                                                    ;
+    var history     : gndless_fixedpoint::Q2_23::Raw [CHANNELS, HISTORY_LENGTH];
+    var even_samples: gndless_fixedpoint::Q2_23::Raw [CHANNELS]                ;
+    var odd_samples : gndless_fixedpoint::Q2_23::Raw [CHANNELS]                ;
+
+    var channel_index: u8                             ;
+    var pair_index   : u8                             ;
+    var accumulator  : signed logic<ACCUMULATOR_WIDTH>;
 
     var left            : signed logic                  <PAIR_SUM_WIDTH>   ;
     var right           : signed logic                  <PAIR_SUM_WIDTH>   ;

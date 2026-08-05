@@ -3,7 +3,9 @@
 /// `VALUES`はfull FIR tap列ではなく、1個のMACで処理する対称pair係数だけを持つ。
 /// 要素のFormatはgndless_fixedpoint::Q2_16::Rawである。
 pub proto package HalfbandCoefficientSet {
-    const PAIR_COUNT: u32;
+    /// ユニークな非ゼロ係数のpair数
+    /// 係数は対称であり、非ゼロ係数は奇数番目にしか現れないため、pair数はtap数の半分以下になる。そのためu8で十分である
+    const PAIR_COUNT: u8;
     type Value     ;
     type Values    ;
     const VALUES    : Values;
@@ -11,7 +13,7 @@ pub proto package HalfbandCoefficientSet {
 
 /// 103 tap halfband用のQ2.16係数set。
 pub package Halfband103Q2_16 for HalfbandCoefficientSet {
-    const PAIR_COUNT: u32                                         = 26;
+    const PAIR_COUNT: u8                                          = 26;
     type Value      = gndless_fixedpoint::Q2_16::Raw             ;
     type Values     = Value                          [PAIR_COUNT];
 
@@ -24,7 +26,7 @@ pub package Halfband103Q2_16 for HalfbandCoefficientSet {
 
 /// 39 tap halfband用のQ2.16係数set。
 pub package Halfband39Q2_16 for HalfbandCoefficientSet {
-    const PAIR_COUNT: u32                                         = 10;
+    const PAIR_COUNT: u8                                          = 10;
     type Value      = gndless_fixedpoint::Q2_16::Raw             ;
     type Values     = Value                          [PAIR_COUNT];
 

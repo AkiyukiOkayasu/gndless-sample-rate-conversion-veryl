@@ -20,9 +20,9 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
     output_valid  : output bbool                                    , /// output vector valid
     output_samples: output gndless_fixedpoint::Q2_23::Raw [CHANNELS], /// Q2.23 output frame vector
 ) {
-    const HISTORY_LENGTH  : u32 = COEFFICIENT_SET::PAIR_COUNT * 2;
-    const DELAY           : u32 = COEFFICIENT_SET::PAIR_COUNT - 1;
-    const PAIR_INDEX_WIDTH: u32 = if COEFFICIENT_SET::PAIR_COUNT <= 1 ? 1 : $clog2(COEFFICIENT_SET::PAIR_COUNT);
+    const HISTORY_LENGTH: u32 = COEFFICIENT_SET::PAIR_COUNT * 2;
+    const DELAY         : u32 = COEFFICIENT_SET::PAIR_COUNT - 1;
+
     // Q2.23のFormatを変更せず、対称pairの加算だけに1bitのguardを追加する。
     const PAIR_SUM_GUARD_BITS   : u32 = 1;
     const PAIR_SUM_WIDTH        : u32 = gndless_fixedpoint::Q2_23::WIDTH + PAIR_SUM_GUARD_BITS;
@@ -46,7 +46,7 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
     var even_samples : gndless_fixedpoint::Q2_23::Raw                    [CHANNELS]                ;
     var odd_samples  : gndless_fixedpoint::Q2_23::Raw                    [CHANNELS]                ;
     var channel_index: u8                                                                          ;
-    var pair_index   : logic                         <PAIR_INDEX_WIDTH>                            ;
+    var pair_index   : u8                                                                          ;
     var accumulator  : signed logic                  <ACCUMULATOR_WIDTH>                           ;
 
     var left            : signed logic                  <PAIR_SUM_WIDTH>   ;

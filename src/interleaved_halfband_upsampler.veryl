@@ -13,13 +13,13 @@ import gndless_fixedpoint::Types::{RoundingMode, OverflowMode};
 pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfband103Q2_16> #(
     param CHANNELS: u8 = 4, /// 同時に処理するchannel数。1から255まで
 ) (
-    clk           : input   clock                                                                                  , /// system clock
-    rst           : input   reset                                                                                  , /// reset
-    input_valid   : input   bbool                                                                                  , /// input frame vector valid
-    input_ready   : output  bbool                                                                                  , /// input frame vector ready
-    input_samples : modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q3_24>::input_port [CHANNELS], /// Q3.24 input frame vector
-    output_valid  : output  bbool                                                                                  , /// output vector valid
-    output_samples: modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q3_24>::input_port [CHANNELS], /// Q3.24 output frame vector
+    clk           : input   clock                                                                                   , /// system clock
+    rst           : input   reset                                                                                   , /// reset
+    input_valid   : input   bbool                                                                                   , /// input frame vector valid
+    input_ready   : output  bbool                                                                                   , /// input frame vector ready
+    input_samples : modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q3_24>::input_port  [CHANNELS], /// Q3.24 input frame vector
+    output_valid  : output  bbool                                                                                   , /// output vector valid
+    output_samples: modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q3_24>::output_port [CHANNELS], /// Q3.24 output frame vector
 ) {
     const HISTORY_LENGTH: u32 = COEFFICIENT_SET::PAIR_COUNT * 2;
     const DELAY         : u32 = COEFFICIENT_SET::PAIR_COUNT - 1;
@@ -55,12 +55,12 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
 
     var coefficient: COEFFICIENT_SET::Value;
 
-    var product         : signed logic                  <PRODUCT_WIDTH>    ;
-    var product_ext     : signed logic                  <ACCUMULATOR_WIDTH>;
-    var next_accumulator: signed logic                  <ACCUMULATOR_WIDTH>;
+    var product         : signed logic<PRODUCT_WIDTH>    ;
+    var product_ext     : signed logic<ACCUMULATOR_WIDTH>;
+    var next_accumulator: signed logic<ACCUMULATOR_WIDTH>;
 
-    var even_result     : gndless_fixedpoint::Q3_24::Raw                   ;
-    var odd_result      : gndless_fixedpoint::Q3_24::Raw                   ;
+    var even_result: gndless_fixedpoint::Q3_24::Raw;
+    var odd_result : gndless_fixedpoint::Q3_24::Raw;
 
     always_comb {
         input_ready = false;
@@ -89,17 +89,17 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
 
         output_valid = false;
         for channel in 0..CHANNELS {
-            output_samples[channel] = gndless_fixedpoint::Q3_24::ZERO;
+            output_samples[channel].raw = gndless_fixedpoint::Q3_24::ZERO;
         }
         if state == OutputEven {
             output_valid = true;
             for channel in 0..CHANNELS {
-                output_samples[channel] = even_samples[channel];
+                output_samples[channel].raw = even_samples[channel];
             }
         } else if state == OutputOdd {
             output_valid = true;
             for channel in 0..CHANNELS {
-                output_samples[channel] = odd_samples[channel];
+                output_samples[channel].raw = odd_samples[channel];
             }
         }
     }

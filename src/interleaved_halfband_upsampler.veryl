@@ -13,13 +13,13 @@ import gndless_fixedpoint::Types::{RoundingMode, OverflowMode};
 pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfband103Q2_16> #(
     param CHANNELS: u8 = 4, /// 同時に処理するchannel数。1から255まで
 ) (
-    clk           : input  clock                                    , /// system clock
-    rst           : input  reset                                    , /// reset
-    input_valid   : input  bbool                                    , /// input frame vector valid
-    input_ready   : output bbool                                    , /// input frame vector ready
-    input_samples : input  gndless_fixedpoint::Q3_24::Raw [CHANNELS], /// Q3.24 input frame vector
-    output_valid  : output bbool                                    , /// output vector valid
-    output_samples: output gndless_fixedpoint::Q3_24::Raw [CHANNELS], /// Q3.24 output frame vector
+    clk           : input   clock                                                                                  , /// system clock
+    rst           : input   reset                                                                                  , /// reset
+    input_valid   : input   bbool                                                                                  , /// input frame vector valid
+    input_ready   : output  bbool                                                                                  , /// input frame vector ready
+    input_samples : modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q3_24>::input_port [CHANNELS], /// Q3.24 input frame vector
+    output_valid  : output  bbool                                                                                  , /// output vector valid
+    output_samples: modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q3_24>::input_port [CHANNELS], /// Q3.24 output frame vector
 ) {
     const HISTORY_LENGTH: u32 = COEFFICIENT_SET::PAIR_COUNT * 2;
     const DELAY         : u32 = COEFFICIENT_SET::PAIR_COUNT - 1;
@@ -49,15 +49,18 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
     var pair_index   : u8                             ;
     var accumulator  : signed logic<ACCUMULATOR_WIDTH>;
 
-    var left            : signed logic                  <PAIR_SUM_WIDTH>   ;
-    var right           : signed logic                  <PAIR_SUM_WIDTH>   ;
-    var pair_sum        : signed logic                  <PAIR_SUM_WIDTH>   ;
-    var coefficient     : COEFFICIENT_SET::Value                           ;
+    var left    : gndless_fixedpoint::Q3_24::Raw;
+    var right   : gndless_fixedpoint::Q3_24::Raw;
+    var pair_sum: gndless_fixedpoint::Q3_24::Raw;
+
+    var coefficient: COEFFICIENT_SET::Value;
+
     var product         : signed logic                  <PRODUCT_WIDTH>    ;
     var product_ext     : signed logic                  <ACCUMULATOR_WIDTH>;
     var next_accumulator: signed logic                  <ACCUMULATOR_WIDTH>;
-    var even_result     : gndless_fixedpoint::Q2_23::Raw                   ;
-    var odd_result      : gndless_fixedpoint::Q2_23::Raw                   ;
+
+    var even_result     : gndless_fixedpoint::Q3_24::Raw                   ;
+    var odd_result      : gndless_fixedpoint::Q3_24::Raw                   ;
 
     always_comb {
         input_ready = false;
@@ -77,7 +80,7 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
         even_result      = gndless_fixedpoint::resize::<
             ACCUMULATOR_WIDTH                        ,
             INPUT_FRAC                               ,
-            gndless_fixedpoint::Q2_23::WIDTH         ,
+            gndless_fixedpoint::Q3_24::WIDTH         ,
             OUTPUT_FRAC                              ,
             RoundingMode::NEAREST_TIES_AWAY_FROM_ZERO,
             OverflowMode::SATURATE                   ,
@@ -86,7 +89,7 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
 
         output_valid = false;
         for channel in 0..CHANNELS {
-            output_samples[channel] = gndless_fixedpoint::Q2_23::ZERO;
+            output_samples[channel] = gndless_fixedpoint::Q3_24::ZERO;
         }
         if state == OutputEven {
             output_valid = true;
@@ -108,10 +111,10 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
             pair_index    = 0;
             accumulator   = 0;
             for channel in 0..CHANNELS {
-                even_samples[channel] = gndless_fixedpoint::Q2_23::ZERO;
-                odd_samples[channel]  = gndless_fixedpoint::Q2_23::ZERO;
+                even_samples[channel] = gndless_fixedpoint::Q3_24::ZERO;
+                odd_samples[channel]  = gndless_fixedpoint::Q3_24::ZERO;
                 for tap in 0..HISTORY_LENGTH {
-                    history[channel][tap] = gndless_fixedpoint::Q2_23::ZERO;
+                    history[channel][tap] = gndless_fixedpoint::Q3_24::ZERO;
                 }
             }
         } else if state == Idle {

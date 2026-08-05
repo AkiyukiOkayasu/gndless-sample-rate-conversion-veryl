@@ -10,7 +10,7 @@ import gndless_fixedpoint::Types::{RoundingMode, OverflowMode};
 /// `HalfbandCoefficientSet` packageから受け取る。MAC自体はchannelと係数pairの
 /// 両方向へ時分割共有する。
 pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfband103Q2_16> #(
-    param CHANNELS: u32 = 4, /// 同時に処理するchannel数
+    param CHANNELS: u8 = 4, /// 同時に処理するchannel数。1から255まで
 ) (
     clk           : input  clock                                    , /// system clock
     rst           : input  reset                                    , /// reset
@@ -20,14 +20,15 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
     output_valid  : output bbool                                    , /// output vector valid
     output_samples: output gndless_fixedpoint::Q2_23::Raw [CHANNELS], /// Q2.23 output frame vector
 ) {
-    const PAIR_COUNT            : u32 = $size(COEFFICIENT_SET::VALUES);
-    const HISTORY_LENGTH        : u32 = PAIR_COUNT * 2;
-    const DELAY                 : u32 = PAIR_COUNT - 1;
-    const CHANNEL_INDEX_WIDTH   : u32 = if CHANNELS <= 1 ? 1 : $clog2(CHANNELS);
-    const PAIR_INDEX_WIDTH      : u32 = if PAIR_COUNT <= 1 ? 1 : $clog2(PAIR_COUNT);
-    const PRODUCT_WIDTH         : u32 = gndless_fixedpoint::Q2_23::WIDTH + 1 + gndless_fixedpoint::Q2_16::WIDTH;
+    const HISTORY_LENGTH  : u32 = COEFFICIENT_SET::PAIR_COUNT * 2;
+    const DELAY           : u32 = COEFFICIENT_SET::PAIR_COUNT - 1;
+    const PAIR_INDEX_WIDTH: u32 = if COEFFICIENT_SET::PAIR_COUNT <= 1 ? 1 : $clog2(COEFFICIENT_SET::PAIR_COUNT);
+    // Q2.23のFormatを変更せず、対称pairの加算だけに1bitのguardを追加する。
+    const PAIR_SUM_GUARD_BITS   : u32 = 1;
+    const PAIR_SUM_WIDTH        : u32 = gndless_fixedpoint::Q2_23::WIDTH + PAIR_SUM_GUARD_BITS;
+    const PRODUCT_WIDTH         : u32 = PAIR_SUM_WIDTH + gndless_fixedpoint::Q2_16::WIDTH;
     const ACCUMULATOR_GUARD_BITS: u32 = 2;
-    const ACCUMULATOR_WIDTH     : u32 = PRODUCT_WIDTH + $clog2(PAIR_COUNT) + ACCUMULATOR_GUARD_BITS;
+    const ACCUMULATOR_WIDTH     : u32 = PRODUCT_WIDTH + $clog2(COEFFICIENT_SET::PAIR_COUNT) + ACCUMULATOR_GUARD_BITS;
     const INPUT_FRAC            : u32 = gndless_fixedpoint::Q2_23::FRACTION_BITS
         + gndless_fixedpoint::Q2_16::FRACTION_BITS;
     const OUTPUT_FRAC           : u32 = gndless_fixedpoint::Q2_23::FRACTION_BITS;
@@ -40,23 +41,23 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
     }
     import State::*;
 
-    var state        : State                                                                         ;
-    var history      : gndless_fixedpoint::Q2_23::Raw                      [CHANNELS, HISTORY_LENGTH];
-    var even_samples : gndless_fixedpoint::Q2_23::Raw                      [CHANNELS]                ;
-    var odd_samples  : gndless_fixedpoint::Q2_23::Raw                      [CHANNELS]                ;
-    var channel_index: logic                         <CHANNEL_INDEX_WIDTH>                           ;
-    var pair_index   : logic                         <PAIR_INDEX_WIDTH>                              ;
-    var accumulator  : signed logic                  <ACCUMULATOR_WIDTH>                             ;
+    var state        : State                                                                       ;
+    var history      : gndless_fixedpoint::Q2_23::Raw                    [CHANNELS, HISTORY_LENGTH];
+    var even_samples : gndless_fixedpoint::Q2_23::Raw                    [CHANNELS]                ;
+    var odd_samples  : gndless_fixedpoint::Q2_23::Raw                    [CHANNELS]                ;
+    var channel_index: u8                                                                          ;
+    var pair_index   : logic                         <PAIR_INDEX_WIDTH>                            ;
+    var accumulator  : signed logic                  <ACCUMULATOR_WIDTH>                           ;
 
-    var left            : signed logic                  <gndless_fixedpoint::Q2_23::WIDTH + 1>;
-    var right           : signed logic                  <gndless_fixedpoint::Q2_23::WIDTH + 1>;
-    var pair_sum        : signed logic                  <gndless_fixedpoint::Q2_23::WIDTH + 1>;
-    var coefficient     : COEFFICIENT_SET::Value                                              ;
-    var product         : signed logic                  <PRODUCT_WIDTH>                       ;
-    var product_ext     : signed logic                  <ACCUMULATOR_WIDTH>                   ;
-    var next_accumulator: signed logic                  <ACCUMULATOR_WIDTH>                   ;
-    var even_result     : gndless_fixedpoint::Q2_23::Raw                                      ;
-    var odd_result      : gndless_fixedpoint::Q2_23::Raw                                      ;
+    var left            : signed logic                  <PAIR_SUM_WIDTH>   ;
+    var right           : signed logic                  <PAIR_SUM_WIDTH>   ;
+    var pair_sum        : signed logic                  <PAIR_SUM_WIDTH>   ;
+    var coefficient     : COEFFICIENT_SET::Value                           ;
+    var product         : signed logic                  <PRODUCT_WIDTH>    ;
+    var product_ext     : signed logic                  <ACCUMULATOR_WIDTH>;
+    var next_accumulator: signed logic                  <ACCUMULATOR_WIDTH>;
+    var even_result     : gndless_fixedpoint::Q2_23::Raw                   ;
+    var odd_result      : gndless_fixedpoint::Q2_23::Raw                   ;
 
     always_comb {
         input_ready = false;
@@ -127,7 +128,7 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
                 state         = Mac;
             }
         } else if state == Mac {
-            if pair_index == PAIR_COUNT - 1 {
+            if pair_index == COEFFICIENT_SET::PAIR_COUNT - 1 {
                 even_samples[channel_index] = even_result;
                 odd_samples[channel_index]  = odd_result;
                 if channel_index == CHANNELS - 1 {

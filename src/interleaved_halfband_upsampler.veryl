@@ -123,7 +123,7 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
         } else if state == Idle {
             if input_valid && input_ready {
                 for channel in 0..CHANNELS {
-                    history[channel][0] = input_samples[channel];
+                    history[channel][0] = input_samples[channel].raw;
                     for tap in 1..HISTORY_LENGTH {
                         history[channel][tap] = history[channel][tap - 1];
                     }

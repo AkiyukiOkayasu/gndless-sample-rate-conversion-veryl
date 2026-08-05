@@ -1,0 +1,36 @@
+/// 2x halfband補間器の対称係数set。
+///
+/// `VALUES`はfull FIR tap列ではなく、1個のMACで処理する対称pair係数だけを持つ。
+/// 要素のFormatはgndless_fixedpoint::Q2_16::Rawである。
+pub proto package HalfbandCoefficientSet {
+    /// ユニークな非ゼロ係数のpair数
+    /// 係数は対称であり、非ゼロ係数は奇数番目にしか現れないため、pair数はtap数の半分以下になる。そのためu8で十分である
+    const PAIR_COUNT: u8;
+    type Value     ;
+    type Values    ;
+    const VALUES    : Values;
+}
+
+/// 103 tap halfband用のQ2.16係数set。
+pub package Halfband103Q2_16 for HalfbandCoefficientSet {
+    const PAIR_COUNT: u8                                          = 26;
+    type Value      = gndless_fixedpoint::Q2_16::Raw             ;
+    type Values     = Value                          [PAIR_COUNT];
+
+    const VALUES: Values = '{
+        -18'sd2, 18'sd6, -18'sd12, 18'sd22, -18'sd36, 18'sd55, -18'sd82, 18'sd118, -18'sd165, 18'sd225, -18'sd301,
+        18'sd395, -18'sd511, 18'sd653, -18'sd827, 18'sd1038, -18'sd1296, 18'sd1614, -18'sd2011, 18'sd2519, -18'sd3191,
+        18'sd4132, -18'sd5560, 18'sd8054, -18'sd13732, 18'sd41663,
+    };
+}
+
+/// 39 tap halfband用のQ2.16係数set。
+pub package Halfband39Q2_16 for HalfbandCoefficientSet {
+    const PAIR_COUNT: u8                                          = 10;
+    type Value      = gndless_fixedpoint::Q2_16::Raw             ;
+    type Values     = Value                          [PAIR_COUNT];
+
+    const VALUES: Values = '{
+        -18'sd6, 18'sd49, -18'sd173, 18'sd451, -18'sd988, 18'sd1939, -18'sd3561, 18'sd6444, -18'sd12684, 18'sd41298,
+    };
+}

@@ -2,7 +2,7 @@
 
 同期・非同期のsample-rate converterのRTL実装。開発の極めて初期段階です。
 
-- 任意比のASRC: `LinearAsrc`、`ContinuousLinearAsrc`、`CubicLagrangeAsrc`。入力の受理は`input_valid && input_ready`、出力はmoduleごとのoutput tickまたは連続clockで進みます。ratioは整数3bitを含むQ形式、FIFO depthとstartup levelはparameter、underflowはstickyです。
+- 任意比のASRC: `ContinuousLinearAsrc`、`CubicLagrangeAsrc`。入力の受理は`input_valid && input_ready`、出力はmoduleごとのoutput tickまたは連続clockで進みます。位相は`phase`/`advance`として外部から受け、`PhaseIncrementEstimator`と`gndless_nco::FractionalPhaseAccumulator`で入力レートへ追従させます。underflowはstickyです。
 - 固定比のupsampler: `HalfbandUpsampler`。複数channelを1個のMACでTDM処理する2x halfbandで、係数は`HalfbandCoefficientSet` package（既定`Halfband103Q1_17`）から供給します。
 - レート計測: `SampleRateTracker`、`PhaseIncrementEstimator`。
 

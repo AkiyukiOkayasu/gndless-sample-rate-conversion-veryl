@@ -10,7 +10,8 @@
 
 - `gndless_fixedpoint`依存を公開済みの0.2.0へ更新
 - 破壊的変更: `LinearAsrc`を削除。静的`ratio`を内部積算するオープンループ構成のため非同期追従ができず、`ContinuousLinearAsrc`が非同期経路をカバーする
-- 破壊的変更: `ContinuousLinearAsrc`、`CubicLagrangeAsrc`を`FORMAT` genericと`FixedPointValue::<FORMAT>` value interfaceへ移行し、既定formatをQ2.23へ変更
+- 破壊的変更: `CubicLagrangeAsrc`を削除。静的`ratio`を内部積算するオープンループ構成のため非同期追従ができず、`ContinuousLinearAsrc`が非同期経路をカバーする
+- 破壊的変更: `ContinuousLinearAsrc`を`FORMAT` genericと`FixedPointValue::<FORMAT>` value interfaceへ移行し、既定formatをQ2.23へ変更
 - 破壊的変更: `TwoXHalfbandAsrc`、`FourXHalfbandAsrc`を削除し、`HalfbandUpsampler`へ置き換え
 - 内部FIFO・補間windowは`FORMAT::Raw`で保持し、public valueのformat境界だけをinterfaceで検査する構成へ整理
 

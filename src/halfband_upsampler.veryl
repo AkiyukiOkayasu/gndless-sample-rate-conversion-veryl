@@ -41,6 +41,8 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
     type product_t         = signed logic<gndless_fixedpoint::Q3_24::WIDTH + gndless_fixedpoint::Q1_17::WIDTH>;
     type accumulator_t     = signed logic<gndless_fixedpoint::Q3_24::WIDTH + gndless_fixedpoint::Q1_17::WIDTH
         + $clog2(COEFFICIENT_SET::PAIR_COUNT) + 2>;
+    // TODO veryl側でgeneric module instantiation時のtype/const宣言順解析が修正されたら、
+    //      type宣言をconst参照(signed logic<PRODUCT_WIDTH> / signed logic<ACCUMULATOR_WIDTH>)へ戻す
 
     const INPUT_FRAC : u8 = gndless_fixedpoint::Q3_24::FRACTION_BITS + gndless_fixedpoint::Q1_17::FRACTION_BITS;
     const OUTPUT_FRAC: u8 = gndless_fixedpoint::Q3_24::FRACTION_BITS;
@@ -77,6 +79,8 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
     var odd_result : gndless_fixedpoint::Q3_24::Raw;
 
     always_comb {
+        // TODO verylのnative simulatorが2D配列のff内read-modify-writeをサポートしたら、
+        //      ffの受理時直接シフトへ戻してnext_historyを削除する
         // historyのシフトは2D配列のread-modify-writeになりsimulatorがelaborateできないため、
         // combでnext_historyを計算し、ffの受理時コピーのみで更新する。
         for channel in 0..CHANNELS {

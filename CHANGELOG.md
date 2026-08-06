@@ -8,7 +8,7 @@
 
 ### Changed
 
-- `gndless_fixedpoint`依存を公開済みの0.2.0へ更新
+- `gndless_fixedpoint`依存を公開済みの0.2.1へ更新
 - 破壊的変更: `LinearAsrc`を削除。静的`ratio`を内部積算するオープンループ構成のため非同期追従ができず、`ContinuousLinearAsrc`が非同期経路をカバーする
 - 破壊的変更: `CubicLagrangeAsrc`を削除。静的`ratio`を内部積算するオープンループ構成のため非同期追従ができず、`ContinuousLinearAsrc`が非同期経路をカバーする
 - 破壊的変更: `ContinuousLinearAsrc`を`FORMAT` genericと`FixedPointValue::<FORMAT>` value interfaceへ移行し、既定formatをQ2.23へ変更

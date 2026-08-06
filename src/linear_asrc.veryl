@@ -1,5 +1,6 @@
 /// FIFOから入力窓を補充しながら、50MHzの全クロックで線形補間値を出力するASRC
 ///
+/// 入力はシステムクロックと非同期(非ロック)の外部クロック由来で、レートは`PhaseIncrementEstimator`と`FractionalPhaseAccumulator`が計測・追従する。
 /// `phase`と`advance`は`gndless_nco::FractionalPhaseAccumulator`から受け取る。
 /// `phase`が現在の入力サンプルから次の入力サンプルへ進む割合を表し、`advance`が次のクロックで窓を1サンプル進めることを表す。
 /// 起動時に2サンプルの補間窓と、`STARTUP_LEVEL`以上の未消費FIFOが揃うまでは`output_active`をfalseにして0を出力する。burst入力ではこの値を大きくして、出力開始前にFIFOへ余裕を持たせる。
@@ -20,7 +21,7 @@
 ///   head: { text: 'Startup, continuous output, and sticky underflow' }
 /// }
 /// ```
-module ContinuousLinearAsrcCore #(
+module LinearAsrcCore #(
     param SAMPLE_WIDTH : u32 = 24, /// 入出力サンプルの符号付きビット幅
     param PHASE_WIDTH  : u32 = 32, /// 位相入力のビット幅
     param INPUT_DEPTH  : u32 = 8 , /// 入力FIFOの深さ
@@ -130,8 +131,10 @@ module ContinuousLinearAsrcCore #(
     }
 }
 
-/// format付きvalue interfaceを使う連続線形ASRC
-pub module ContinuousLinearAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFormat = gndless_fixedpoint::Q2_23> #(
+/// format付きvalue interfaceを使う線形ASRC
+///
+/// 既定のQ4.23はmodule境界の統一formatで、±1.0の信号を±8.0の範囲で扱う
+pub module LinearAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFormat = gndless_fixedpoint::Q4_23> #(
     param PHASE_WIDTH  : u32 = 32, /// 位相入力のbit幅
     param INPUT_DEPTH  : u32 = 8 , /// 入力FIFOの深さ
     param STARTUP_LEVEL: u32 = 1 , /// 出力開始に必要な未消費FIFO word数
@@ -148,7 +151,7 @@ pub module ContinuousLinearAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFo
     output_sample: modport gndless_fixedpoint::FixedPointValue::<FORMAT>::output_port                         ,
     underflow    : output  bbool                                                                              ,
 ) {
-    inst core: ContinuousLinearAsrcCore #(
+    inst core: LinearAsrcCore #(
         SAMPLE_WIDTH : FORMAT::WIDTH,
         PHASE_WIDTH  : PHASE_WIDTH  ,
         INPUT_DEPTH  : INPUT_DEPTH  ,
@@ -168,9 +171,9 @@ pub module ContinuousLinearAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFo
     );
 }
 
-/// 連続出力ASRCと分数位相アキュムレータの最小統合を検証
-#[test(test_continuous_linear_asrc)]
-module test_continuous_linear_asrc {
+/// 線形ASRCと分数位相アキュムレータの最小統合を検証
+#[test(test_linear_asrc)]
+module test_linear_asrc {
     const SAMPLE_WIDTH: u32 = 16;
     const PHASE_WIDTH : u32 = 4;
 
@@ -200,7 +203,7 @@ module test_continuous_linear_asrc {
         advance                      ,
     );
 
-    inst asrc: ContinuousLinearAsrcCore #(
+    inst asrc: LinearAsrcCore #(
         SAMPLE_WIDTH: SAMPLE_WIDTH,
         PHASE_WIDTH : PHASE_WIDTH ,
         INPUT_DEPTH : 8           ,
@@ -237,20 +240,20 @@ module test_continuous_linear_asrc {
         clk.next(1);
         input_valid = false;
 
-        $assert(output_active, "continuous ASRC must become active after priming");
-        $assert(output_sample == 16'sd0, "continuous ASRC must hold the initial window while priming");
-        $assert(!underflow, "continuous ASRC must not underflow with buffered input");
+        $assert(output_active, "linear ASRC must become active after priming");
+        $assert(output_sample == 16'sd0, "linear ASRC must hold the initial window while priming");
+        $assert(!underflow, "linear ASRC must not underflow with buffered input");
         $assert(input_level == 4'd2, "priming sample and unused burst sample must remain in the FIFO");
 
         clk.next(1);
-        $assert(output_sample == 16'sd25, "continuous ASRC quarter phase mismatch");
+        $assert(output_sample == 16'sd25, "linear ASRC quarter phase mismatch");
         clk.next(1);
-        $assert(output_sample == 16'sd50, "continuous ASRC midpoint phase mismatch");
+        $assert(output_sample == 16'sd50, "linear ASRC midpoint phase mismatch");
         clk.next(1);
-        $assert(output_sample == 16'sd75, "continuous ASRC three-quarter phase mismatch");
+        $assert(output_sample == 16'sd75, "linear ASRC three-quarter phase mismatch");
         clk.next(1);
-        $assert(output_sample == 16'sd100, "continuous ASRC second window mismatch");
-        $assert(!underflow, "continuous ASRC must keep the buffered stream running");
+        $assert(output_sample == 16'sd100, "linear ASRC second window mismatch");
+        $assert(!underflow, "linear ASRC must keep the buffered stream running");
         $finish();
     }
 }

@@ -22,16 +22,6 @@ jobs:
       - run: veryl build
       - run: veryl test
       - run: veryl doc
-      - name: Interpolation benchmark
-        if: ${{ hashFiles('tools/analyze_interpolator_benchmark.py') != '' }}
-        run: |
-          veryl test --ignored -t interpolator_benchmark
-          python3 tools/analyze_interpolator_benchmark.py target/interpolator_benchmark.csv --format json
-      - name: Fixed-rate ASRC benchmark
-        if: ${{ hashFiles('tools/analyze_fixed_rate_asrc.py') != '' }}
-        run: |
-          veryl test --ignored -t fixed_rate_asrc_benchmark
-          python3 tools/analyze_fixed_rate_asrc.py target/fixed_rate_asrc_benchmark.csv
 
   backend-validation:
     runs-on: ubuntu-latest

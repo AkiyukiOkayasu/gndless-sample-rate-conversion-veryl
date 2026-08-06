@@ -20,7 +20,7 @@ import gndless_fixedpoint::Types::{RoundingMode, OverflowMode};
 ///
 /// COEFFICIENT_SETは係数set prototype`HalfbandCoefficientSet`を実装したpackageで、デフォルトは`Halfband103Q1_17`。
 /// Tap数が少ない`Halfband39Q1_17`も用意している。tap数が少ないと周波数特性は悪化するが、MACの処理時間は短くなる。
-pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfband103Q1_17> #(
+pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfband103Q1_17> #(
     param CHANNELS: u8 = 2, /// channel数。1つのMACでTDM処理する。ステレオを想定して2をデフォルトとする。
 ) (
     clk           : input   clock                                                                                   , /// system clock

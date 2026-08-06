@@ -4,6 +4,10 @@ import gndless_fixedpoint::Types::{RoundingMode, OverflowMode};
 ///
 /// sampleはQ3.24、係数はQ2.16。24bit PCM想定だが、DSPは27bitを想定しているためguard bitなども含めてQ3.24とする。
 /// 出力はQ3.24のまま。補間によって+/-1.0を超える場合もある。
+/// 入力はQ3.24上で+/-1.0以内(Q1.23相当)であることを前提とする。even phaseの係数の絶対値和は約1.346なので、
+/// 出力は最大+/-1.35程度、`pair_sum`(対称tapの和)は最大+/-2.7程度になり、どちらもQ3.24(±4)の範囲に収まる。
+/// この前提を外れる入力(Q3.24フルレンジ±4)では`pair_sum`が27bitでwrapし、乗算前に破損するため、
+/// producer側で入力が+/-1.0以内に収まることを保証すること。
 /// 入力frameは`input_valid && input_ready`で受理し、処理中は`input_ready`をLowにする。
 /// 出力はeven phase、odd phaseの順にchannel vectorを1回ずつ出力する。
 ///

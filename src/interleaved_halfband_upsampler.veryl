@@ -10,6 +10,9 @@ import gndless_fixedpoint::Types::{RoundingMode, OverflowMode};
 /// producer側で入力が+/-1.0以内に収まることを保証すること。
 /// 入力frameは`input_valid && input_ready`で受理し、処理中は`input_ready`をLowにする。
 /// 出力はeven phase、odd phaseの順にchannel vectorを1回ずつ出力する。
+/// `output_valid`と`output_samples`は1クロックの出力レジスタを経由する。各出力は対応する状態に入ってから
+/// 1クロック後に現れ、ちょうど1クロックの間保持される。2x upsamplerのため入力frame 1つにつき
+/// even/oddの2出力frameを2クロック連続のburstとして出力するので、`output_valid`は2クロック連続でHighになる。
 ///
 /// 係数はfull tap列ではなく、halfbandの対称pair係数を実装した
 /// `HalfbandCoefficientSet` packageから受け取る。MAC自体はchannelと係数pairの
@@ -94,22 +97,6 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
             OverflowMode::SATURATE                   ,
         >(next_accumulator);
         odd_result       = history[channel_index][DELAY];
-
-        output_valid = false;
-        for channel in 0..CHANNELS {
-            output_samples[channel].raw = gndless_fixedpoint::Q3_24::ZERO;
-        }
-        if state == OutputEven {
-            output_valid = true;
-            for channel in 0..CHANNELS {
-                output_samples[channel].raw = even_samples[channel];
-            }
-        } else if state == OutputOdd {
-            output_valid = true;
-            for channel in 0..CHANNELS {
-                output_samples[channel].raw = odd_samples[channel];
-            }
-        }
     }
 
     always_ff {
@@ -157,6 +144,32 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
             state = OutputOdd;
         } else if state == OutputOdd {
             state = Idle;
+        }
+    }
+
+    always_ff {
+        if_reset {
+            output_valid = false;
+            for channel in 0..CHANNELS {
+                output_samples[channel].raw = gndless_fixedpoint::Q3_24::ZERO;
+            }
+        } else if state == OutputEven {
+            output_valid = true;
+            for channel in 0..CHANNELS {
+                output_samples[channel].raw = even_samples[channel];
+            }
+        } else if state == OutputOdd {
+            output_valid = true;
+            for channel in 0..CHANNELS {
+                output_samples[channel].raw = odd_samples[channel];
+            }
+        } else {
+            // output_samplesの0クリアはデバッグ時の波形の分かりやすさのためのもので、動作上は必須ではない。
+            // validがLowのときのoutput_samplesはdon't careなので、保持しても構わない。
+            output_valid = false;
+            for channel in 0..CHANNELS {
+                output_samples[channel].raw = gndless_fixedpoint::Q3_24::ZERO;
+            }
         }
     }
 }

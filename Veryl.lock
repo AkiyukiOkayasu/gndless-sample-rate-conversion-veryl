@@ -3,6 +3,20 @@
 version = 1
 
 [[projects]]
+name = "gndless_fixedpoint"
+dependencies = []
+
+[projects.source]
+uuid = "b44c5b8e-3cfd-5e64-9001-3b7e518c2267"
+url = "https://github.com/AkiyukiOkayasu/gndless-fixedpoint-veryl"
+path = ""
+project = "gndless_fixedpoint"
+version = "0.2.2"
+revision = "ffc6f5ddd587a7dd609e33d57d06dc075bcfbe2a"
+
+[projects.properties]
+
+[[projects]]
 name = "gndless_nco"
 dependencies = []
 
@@ -17,13 +31,6 @@ revision = "23b602972ab07aa2fb7596590367d2caa125bddb"
 [projects.properties]
 
 [[projects]]
-name = "gndless_fixedpoint"
-source = "../gndless-fixedpoint-veryl"
-dependencies = []
-
-[projects.properties]
-
-[[projects]]
 name = "gndless_interpolation"
 source = "../gndless-interpolation-veryl"
 
@@ -31,4 +38,11 @@ source = "../gndless-interpolation-veryl"
 
 [[projects.dependencies]]
 name = "gndless_fixedpoint"
-source = "../gndless-fixedpoint-veryl"
+
+[projects.dependencies.source]
+uuid = "b44c5b8e-3cfd-5e64-9001-3b7e518c2267"
+url = "https://github.com/AkiyukiOkayasu/gndless-fixedpoint-veryl"
+path = ""
+project = "gndless_fixedpoint"
+version = "0.2.2"
+revision = "ffc6f5ddd587a7dd609e33d57d06dc075bcfbe2a"

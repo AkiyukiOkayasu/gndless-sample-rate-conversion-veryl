@@ -14,7 +14,7 @@ target = { type = "directory", path = "target" }
 
 [dependencies]
 gndless_fixedpoint = { github = "AkiyukiOkayasu/gndless-fixedpoint-veryl", version = "0.2.2" }
-gndless_interpolation = { path = "../gndless-interpolation-veryl" }
+gndless_interpolation = { github = "AkiyukiOkayasu/gndless-interpolation-veryl", version = "0.3.0" }
 gndless_nco = { github = "AkiyukiOkayasu/gndless-nco-veryl", version = "0.1.0" }
 
 [publish]

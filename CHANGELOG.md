@@ -8,15 +8,13 @@
 
 ### Changed
 
-- 破壊的変更: module境界のformatをQ4.23で統一した。`HalfbandUpsampler`のI/OをQ3.24から、`LinearAsrc`/`LinearInterpolator`の既定をQ2.23から、それぞれQ4.23へ変更。±1.0の信号を±8.0の範囲で扱い、内部演算は境界formatを拡張しない
-- 破壊的変更: `LinearInterpolatorCore`の`delta`をSAMPLE_WIDTH幅のwrap減算へ変更し、|sample1 - sample0| < 2^(SAMPLE_WIDTH - 1)の入力契約をdoc commentへ明記した。既定のQ4.23(27bit)ではdelta×phase_extの27x36乗算器1スライスへ収まる
-- 破壊的変更: `ContinuousLinearAsrc`を`LinearAsrc`へ改名。tick駆動variantは持たず、外部フリーランニングクロック由来の非同期入力を`PhaseIncrementEstimator`+`FractionalPhaseAccumulator`が計測・追従する構成をdoc commentへ明記した
-- `gndless_fixedpoint`依存を公開済みの0.2.1へ更新
-- 破壊的変更: `LinearAsrc`を削除。静的`ratio`を内部積算するオープンループ構成のため非同期追従ができず、`ContinuousLinearAsrc`が非同期経路をカバーする
-- 破壊的変更: `CubicLagrangeAsrc`を削除。静的`ratio`を内部積算するオープンループ構成のため非同期追従ができず、`ContinuousLinearAsrc`が非同期経路をカバーする
-- 破壊的変更: `ContinuousLinearAsrc`を`FORMAT` genericと`FixedPointValue::<FORMAT>` value interfaceへ移行し、既定formatをQ2.23へ変更
-- 破壊的変更: `TwoXHalfbandAsrc`、`FourXHalfbandAsrc`を削除し、`HalfbandUpsampler`へ置き換え
-- 内部FIFO・補間windowは`FORMAT::Raw`で保持し、public valueのformat境界だけをinterfaceで検査する構成へ整理
+- `gndless_fixedpoint`依存を公開済みの0.2.2へ更新
+
+## BREAKING CHANGE
+
+- `ContinuousLinearAsrc`を`LinearAsrc`へ改名し、`FORMAT` genericと`FixedPointValue::<FORMAT>` value interfaceへ移行した。静的`ratio`を内部積算するオープンループ構成の`LinearAsrc`/`CubicLagrangeAsrc`は削除し、非同期経路を一本化した。外部フリーランニングクロック由来の非同期入力を`PhaseIncrementEstimator`+`FractionalPhaseAccumulator`が計測・追従する
+- module境界のformatをQ4.23で統一した。`HalfbandUpsampler`のI/OをQ3.24から、`LinearAsrc`の既定をQ2.23から、それぞれQ4.23へ変更。±1.0の信号を±8.0の範囲で扱い、内部演算は境界formatを拡張しない
+- `TwoXHalfbandAsrc`、`FourXHalfbandAsrc`を削除し、`HalfbandUpsampler`へ置き換え
 
 ## [0.2.0] - 2026-08-02
 

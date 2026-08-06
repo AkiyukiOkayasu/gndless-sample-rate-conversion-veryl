@@ -2,7 +2,7 @@ import gndless_fixedpoint::Types::{RoundingMode, OverflowMode};
 
 /// 複数channelのframe vectorを1個のMACでTDM処理する2x halfband upsampler。
 ///
-/// sampleはQ3.24、係数はQ2.16。24bit PCM想定だが、DSPは27bitを想定しているためguard bitなども含めてQ3.24とする。
+/// sampleはQ3.24、係数はQ1.17。24bit PCM想定だが、DSPは27bitを想定しているためguard bitなども含めてQ3.24とする。
 /// 出力はQ3.24のまま。補間によって+/-1.0を超える場合もある。
 /// 入力はQ3.24上で+/-1.0以内(Q1.23相当)であることを前提とする。even phaseの係数の絶対値和は約1.346なので、
 /// 出力は最大+/-1.35程度、`pair_sum`(対称tapの和)は最大+/-2.7程度になり、どちらもQ3.24(±4)の範囲に収まる。
@@ -18,9 +18,9 @@ import gndless_fixedpoint::Types::{RoundingMode, OverflowMode};
 /// `HalfbandCoefficientSet` packageから受け取る。MAC自体はchannelと係数pairの
 /// 両方向へ時分割共有する。
 ///
-/// COEFFICIENT_SETは係数set prototype`HalfbandCoefficientSet`を実装したpackageで、デフォルトは`Halfband103Q2_16`。
-/// Tap数が少ない`Halfband39Q2_16`も用意している。tap数が少ないと周波数特性は悪化するが、MACの処理時間は短くなる。
-pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfband103Q2_16> #(
+/// COEFFICIENT_SETは係数set prototype`HalfbandCoefficientSet`を実装したpackageで、デフォルトは`Halfband103Q1_17`。
+/// Tap数が少ない`Halfband39Q1_17`も用意している。tap数が少ないと周波数特性は悪化するが、MACの処理時間は短くなる。
+pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfband103Q1_17> #(
     param CHANNELS: u8 = 2, /// channel数。1つのMACでTDM処理する。ステレオを想定して2をデフォルトとする。
 ) (
     clk           : input   clock                                                                                   , /// system clock
@@ -35,12 +35,12 @@ pub module InterleavedHalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSe
     const DELAY         : u32 = COEFFICIENT_SET::PAIR_COUNT - 1;
 
     const PRODUCT_WIDTH    : u8                              = gndless_fixedpoint::Q3_24::WIDTH
-        + gndless_fixedpoint::Q2_16::WIDTH; // 乗算器の出力幅: 入力幅+係数幅
+        + gndless_fixedpoint::Q1_17::WIDTH; // 乗算器の出力幅: 入力幅+係数幅
     const ACCUMULATOR_WIDTH: u8                              = PRODUCT_WIDTH + $clog2(COEFFICIENT_SET::PAIR_COUNT) + 2; // 2は加算でのオーバーフローを考慮したguard bit
     type product_t         = signed logic<PRODUCT_WIDTH>    ;
     type accumulator_t     = signed logic<ACCUMULATOR_WIDTH>;
 
-    const INPUT_FRAC : u8 = gndless_fixedpoint::Q3_24::FRACTION_BITS + gndless_fixedpoint::Q2_16::FRACTION_BITS;
+    const INPUT_FRAC : u8 = gndless_fixedpoint::Q3_24::FRACTION_BITS + gndless_fixedpoint::Q1_17::FRACTION_BITS;
     const OUTPUT_FRAC: u8 = gndless_fixedpoint::Q3_24::FRACTION_BITS;
 
     enum State {

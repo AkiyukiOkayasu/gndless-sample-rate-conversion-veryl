@@ -66,9 +66,11 @@ def design_halfband(taps: int, beta: float) -> list[float]:
 
 
 def quantize(coefficients: list[float], width: int) -> list[int]:
-    # 18bit係数はgndless_fixedpointのQ2.16と揃える。
-    # Q2.(width-2)なら+1.0を正確に表現できる。
-    scale = 1 << (width - 2)
+    # 18bit係数はgndless_fixedpointのQ1.17と揃える。
+    # Q1.(width-1)のスケールで、+1.0未満の全係数が収まる。
+    # 中心係数1.0はQ1.17で表現できない (MAX=1.0-2^-17) が、odd phaseは
+    # 遅延した入力のpassthroughで実装するため、VALUESに含めずここではMAXへクランプする。
+    scale = 1 << (width - 1)
     limit = (1 << (width - 1)) - 1
     minimum = -(1 << (width - 1))
     return [max(minimum, min(limit, round_away_from_zero(value * scale))) for value in coefficients]
@@ -101,7 +103,7 @@ def measure(
     stopband_hz: float,
     points: int = 2001,
 ) -> Metrics:
-    scale = float(1 << (coefficient_width - 2))
+    scale = float(1 << (coefficient_width - 1))
     normalized = [coefficient / scale for coefficient in coefficients]
     passband = [
         response_db(normalized, passband_hz / sample_rate * index / (points - 1))

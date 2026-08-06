@@ -34,11 +34,13 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
     const HISTORY_LENGTH: u32 = COEFFICIENT_SET::PAIR_COUNT * 2;
     const DELAY         : u32 = COEFFICIENT_SET::PAIR_COUNT - 1;
 
-    const PRODUCT_WIDTH    : u8                              = gndless_fixedpoint::Q3_24::WIDTH
+    const PRODUCT_WIDTH    : u8                                                                                = gndless_fixedpoint::Q3_24::WIDTH
         + gndless_fixedpoint::Q1_17::WIDTH; // 乗算器の出力幅: 入力幅+係数幅
-    const ACCUMULATOR_WIDTH: u8                              = PRODUCT_WIDTH + $clog2(COEFFICIENT_SET::PAIR_COUNT) + 2; // 2は加算でのオーバーフローを考慮したguard bit
-    type product_t         = signed logic<PRODUCT_WIDTH>    ;
-    type accumulator_t     = signed logic<ACCUMULATOR_WIDTH>;
+    const ACCUMULATOR_WIDTH: u8                                                                                = PRODUCT_WIDTH
+        + $clog2(COEFFICIENT_SET::PAIR_COUNT) + 2; // 2は加算でのオーバーフローを考慮したguard bit
+    type product_t         = signed logic<gndless_fixedpoint::Q3_24::WIDTH + gndless_fixedpoint::Q1_17::WIDTH>;
+    type accumulator_t     = signed logic<gndless_fixedpoint::Q3_24::WIDTH + gndless_fixedpoint::Q1_17::WIDTH
+        + $clog2(COEFFICIENT_SET::PAIR_COUNT) + 2>;
 
     const INPUT_FRAC : u8 = gndless_fixedpoint::Q3_24::FRACTION_BITS + gndless_fixedpoint::Q1_17::FRACTION_BITS;
     const OUTPUT_FRAC: u8 = gndless_fixedpoint::Q3_24::FRACTION_BITS;
@@ -53,6 +55,7 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
 
     var state       : State                                                    ;
     var history     : gndless_fixedpoint::Q3_24::Raw [CHANNELS, HISTORY_LENGTH];
+    var next_history: gndless_fixedpoint::Q3_24::Raw [CHANNELS, HISTORY_LENGTH];
     var even_samples: gndless_fixedpoint::Q3_24::Raw [CHANNELS]                ;
     var odd_samples : gndless_fixedpoint::Q3_24::Raw [CHANNELS]                ;
 
@@ -74,15 +77,22 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
     var odd_result : gndless_fixedpoint::Q3_24::Raw;
 
     always_comb {
+        // historyのシフトは2D配列のread-modify-writeになりsimulatorがelaborateできないため、
+        // combでnext_historyを計算し、ffの受理時コピーのみで更新する。
+        for channel in 0..CHANNELS {
+            next_history[channel][0] = input_samples[channel].raw;
+            for tap in 1..HISTORY_LENGTH {
+                next_history[channel][tap] = history[channel][tap - 1];
+            }
+        }
+
         input_ready = false;
         if state == Idle {
             input_ready = true;
         }
 
-        left             = $signed({history[channel_index][pair_index][msb], history[channel_index][pair_index],});
-        right            = $signed(
-            {history[channel_index][HISTORY_LENGTH - 1 - pair_index][msb], history[channel_index][HISTORY_LENGTH - 1 - pair_index],},
-        );
+        left             = history[channel_index][pair_index];
+        right            = history[channel_index][HISTORY_LENGTH - 1 - pair_index];
         pair_sum         = left + right;
         coefficient      = COEFFICIENT_SET::VALUES[pair_index];
         product          = pair_sum * coefficient;
@@ -115,9 +125,8 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
         } else if state == Idle {
             if input_valid && input_ready {
                 for channel in 0..CHANNELS {
-                    history[channel][0] = input_samples[channel].raw;
-                    for tap in 1..HISTORY_LENGTH {
-                        history[channel][tap] = history[channel][tap - 1];
+                    for tap in 0..HISTORY_LENGTH {
+                        history[channel][tap] = next_history[channel][tap];
                     }
                 }
                 channel_index = 0;
@@ -171,5 +180,116 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
                 output_samples[channel].raw = gndless_fixedpoint::Q3_24::ZERO;
             }
         }
+    }
+}
+
+/// HalfbandUpsamplerのDC応答とodd位相の遅延恒等を検証
+///
+/// 係数setは`Halfband39Q1_17`を使い、DCゲインがちょうど1 + 2^-16になることを利用する。
+/// 39 tap setの係数和は2 * sum(VALUES) = 2^17 + 2なので、DC入力Vに対するeven phase出力は
+/// V + (V >> 16)に剰余なしで一致する。odd phaseは中央tapを通過した入力の遅延恒等で、
+/// 入力からDELAY (PAIR_COUNT - 1) frame前の値をそのまま出力する。
+#[test(test_halfband_upsampler)]
+module test_halfband_upsampler {
+    const PAIR_COUNT: u8  = 10;
+    const DELAY     : u32 = PAIR_COUNT - 1;
+
+    inst clk: $tb::clock_gen;
+    inst rst: $tb::reset_gen ( clk );
+
+    var input_valid : bbool;
+    var input_ready : bbool;
+    var output_valid: bbool;
+
+    inst input_samples : gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q3_24> [2];
+    inst output_samples: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q3_24> [2];
+
+    inst dut: HalfbandUpsampler::<Halfband39Q1_17> #(
+        CHANNELS: 2,
+    ) (
+        clk           : clk           ,
+        rst           : rst           ,
+        input_valid   : input_valid   ,
+        input_ready   : input_ready   ,
+        input_samples : input_samples ,
+        output_valid  : output_valid  ,
+        output_samples: output_samples,
+    );
+
+    initial {
+        input_valid = false;
+        for i in 0..2 {
+            input_samples[i].raw = gndless_fixedpoint::Q3_24::ZERO;
+        }
+        rst.assert();
+        clk.next(1);
+
+        // DCフェーズ: 20 frame分を一定値で投入し、最後のframeのeven/oddを判定する
+        for _frame in 0..20 {
+            for _i in 0..100 {
+                if input_ready {
+                    break;
+                }
+                clk.next(1);
+            }
+            input_samples[0].raw = gndless_fixedpoint::Q3_24::ONE;
+            input_samples[1].raw = gndless_fixedpoint::Q3_24::NEG_ONE;
+            input_valid          = true;
+            clk.next(1);
+            input_valid = false;
+        }
+        for _i in 0..100 {
+            if output_valid {
+                break;
+            }
+            clk.next(1);
+        }
+        $assert(
+            output_samples[0].raw == gndless_fixedpoint::Q3_24::ONE + (gndless_fixedpoint::Q3_24::ONE >>> 16),
+            "halfband even phase DC gain (ch0) mismatch",
+        );
+        $assert(
+            output_samples[1].raw == gndless_fixedpoint::Q3_24::NEG_ONE + (gndless_fixedpoint::Q3_24::NEG_ONE >>> 16),
+            "halfband even phase DC gain (ch1) mismatch",
+        );
+        clk.next(1);
+        $assert(output_samples[0].raw == gndless_fixedpoint::Q3_24::ONE, "halfband odd phase identity (ch0) mismatch");
+        $assert(
+            output_samples[1].raw == gndless_fixedpoint::Q3_24::NEG_ONE,
+            "halfband odd phase identity (ch1) mismatch",
+        );
+        clk.next(1);
+        $assert(!output_valid, "halfband output must be a two-cycle burst");
+
+        // rampフェーズ: 可変入力を投入し、odd phaseがDELAY frame前の入力と一致することを確認する
+        for frame in 0..10 {
+            for _i in 0..100 {
+                if input_ready {
+                    break;
+                }
+                clk.next(1);
+            }
+            input_samples[0].raw = (100 + frame * 10) as gndless_fixedpoint::Q3_24::Raw;
+            input_samples[1].raw = (200 + frame * 10) as gndless_fixedpoint::Q3_24::Raw;
+            input_valid          = true;
+            clk.next(1);
+            input_valid = false;
+        }
+        for _i in 0..100 {
+            if output_valid {
+                break;
+            }
+            clk.next(1);
+        }
+        clk.next(1);
+        $assert(
+            output_samples[0].raw == 27'sd100,
+            "halfband odd phase must output the input of DELAY frames before (ch0)",
+        );
+        $assert(
+            output_samples[1].raw == 27'sd200,
+            "halfband odd phase must output the input of DELAY frames before (ch1)",
+        );
+        $finish();
     }
 }

@@ -10,7 +10,7 @@
 
 ### Changed
 
-- `HalfbandUpsampler`のhistoryをFFシフト配列からBSRAM推論対応のinline配列循環バッファ(2コピー)へ変更した。登録アドレス+登録出力を同一always_ffで行いGowinのBSRAM推論に適合させる。SRAM推論のためhistoryはresetを持たず、最初のHISTORY_LENGTH frame分の出力は不定値を含む。MACは同期読み出し(2clkレイテンシ)をprefetchパイプラインで吸収し、1 pair/cycleを維持する
+- `HalfbandUpsampler`のhistoryをFFシフト配列からBSRAM推論対応のinline配列循環バッファ(2コピー)へ変更した。登録アドレス+登録出力を同一always_ffで行いGowinのBSRAM推論に適合させる。SRAM推論のためhistoryはresetを持たず、最初のHISTORY_LENGTH frame分の出力は不定値を含む。MACは同期読み出し(2clk)+積レジスタ(1clk)のレイテンシをprefetchパイプラインで吸収し、1 pair/cycleを維持する
 - `LinearAsrc`の線形補間を3段パイプライン化した。乗算パスを分割してFmax 50MHz超を確保し、出力は窓確定から3clk後に現れる。丸め方式は変更なし
 - Gowin合成のprocedural for制約(interface配列の定数選択不可)に対応し、modport配列をgenerate assignでplain配列へコピーして使う
 - `Veryl.toml`に`clock_type`/`reset_type`を明示し、stdモジュールのリセット極性を利用側(sync_high)と一致させた

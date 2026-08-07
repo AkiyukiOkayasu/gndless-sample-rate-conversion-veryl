@@ -14,6 +14,14 @@ import gndless_fixedpoint::Types::{RoundingMode, OverflowMode};
 /// 1クロック後に現れ、ちょうど1クロックの間保持される。2x upsamplerのため入力frame 1つにつき
 /// even/oddの2出力frameを2クロック連続のburstとして出力するので、`output_valid`は2クロック連続でHighになる。
 ///
+/// historyはSRAM推論のためresetで初期化しない。起動直後の内容は不定であり、最初のHISTORY_LENGTH
+/// frame分の出力には不定値が含まれる。ストリームが進めば即座に実データへ置き換わるため、
+/// 消費側は起動過渡の値を要求しないこと。
+/// historyは循環アドレス方式(書き込み位置のみが前進し、タップkは書き込み位置からk前の位置にある)で、
+/// left/rightの2タップを同時に読むため同じ内容を2コピー持つ。書き込みは入力受理後に1 channelずつ行う。
+/// MACはSRAMの同期読み出し(登録アドレス、1clkレイテンシ)をprefetchパイプラインで吸収し、
+/// 1 pair/cycleを維持する。SRAMの書き込みと読み出しは別状態で行うためread-during-writeは発生しない。
+///
 /// 係数はfull tap列ではなく、halfbandの対称pair係数を実装した
 /// `HalfbandCoefficientSet` packageから受け取る。MAC自体はchannelと係数pairの
 /// 両方向へ時分割共有する。
@@ -31,8 +39,10 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
     output_valid  : output  bbool                                                                                   , /// output vector valid
     output_samples: modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23>::output_port [CHANNELS], /// Q4.23 output frame vector
 ) {
-    const HISTORY_LENGTH: u32 = COEFFICIENT_SET::PAIR_COUNT * 2;
-    const DELAY         : u32 = COEFFICIENT_SET::PAIR_COUNT - 1;
+    const HISTORY_LENGTH   : u32 = COEFFICIENT_SET::PAIR_COUNT * 2;
+    const WORD_COUNT       : u32 = CHANNELS * HISTORY_LENGTH;
+    const HISTORY_LENGTH_U8: u8  = HISTORY_LENGTH as u8;
+    const PAIR_COUNT_U8    : u8  = COEFFICIENT_SET::PAIR_COUNT as u8;
 
     const PRODUCT_WIDTH    : u8                                                                                = gndless_fixedpoint::Q4_23::WIDTH
         + gndless_fixedpoint::Q1_17::WIDTH; // 乗算器の出力幅: 入力幅+係数幅
@@ -49,44 +59,57 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
 
     enum State {
         Idle,
+        Write,
         Mac,
         OutputEven,
         OutputOdd,
     }
     import State::*;
 
-    var state       : State                                                    ;
-    var history     : gndless_fixedpoint::Q4_23::Raw [CHANNELS, HISTORY_LENGTH];
-    var next_history: gndless_fixedpoint::Q4_23::Raw [CHANNELS, HISTORY_LENGTH];
-    var even_samples: gndless_fixedpoint::Q4_23::Raw [CHANNELS]                ;
-    var odd_samples : gndless_fixedpoint::Q4_23::Raw [CHANNELS]                ;
+    // historyは1W1RのSRAM推論RAM(`$std::ram`)をleft/rightの2コピー持つ。
+    // resetを持たないため初期値は不定で、最初のHISTORY_LENGTH frame分の出力に不定値が含まれる。
+    // ストリームが進めば即座に実データへ置き換わる。
+    var history_write_en: logic                                    ;
+    var write_addr      : u8                             [CHANNELS];
+    var next_write_addr : u8                             [CHANNELS];
+    var frame_samples   : gndless_fixedpoint::Q4_23::Raw [CHANNELS];
+    var write_ch        : u8                                       ;
 
-    var channel_index: u8           ;
-    var pair_index   : u8           ;
-    var accumulator  : accumulator_t;
+    var state      : State;
+    var mac_channel: u8   ;
+    var mac_cycle  : u8   ;
 
-    var left    : gndless_fixedpoint::Q4_23::Raw;
-    var right   : gndless_fixedpoint::Q4_23::Raw;
-    var pair_sum: gndless_fixedpoint::Q4_23::Raw;
+    // MACのprefetchパイプライン。issue_pairは発行中のpairで、PAIR_COUNTと等しいときは
+    // oddタップの読み出しを意味する。issue_pair_qは前サイクルに発行したpairで、係数選択に使う。
+    var issue_pair  : u8           ;
+    var issue_pair_q: u8           ;
+    var accumulator : accumulator_t;
 
-    var coefficient: COEFFICIENT_SET::Value;
+    var read_addr_a: u8                            ;
+    var read_addr_b: u8                            ;
+    var read_data_a: gndless_fixedpoint::Q4_23::Raw;
+    var read_data_b: gndless_fixedpoint::Q4_23::Raw;
 
-    var product         : product_t    ;
-    var product_ext     : accumulator_t;
-    var next_accumulator: accumulator_t;
+    var even_samples: gndless_fixedpoint::Q4_23::Raw [CHANNELS];
+    var odd_samples : gndless_fixedpoint::Q4_23::Raw [CHANNELS];
 
-    var even_result: gndless_fixedpoint::Q4_23::Raw;
-    var odd_result : gndless_fixedpoint::Q4_23::Raw;
+    var read_addr_a_next: u8                            ;
+    var read_addr_b_next: u8                            ;
+    var write_word_addr : u8                            ;
+    var write_data      : gndless_fixedpoint::Q4_23::Raw;
+    var pair_sum        : gndless_fixedpoint::Q4_23::Raw;
+    var coefficient     : COEFFICIENT_SET::Value        ;
+    var product         : product_t                     ;
+    var product_ext     : accumulator_t                 ;
+    var next_accumulator: accumulator_t                 ;
+    var even_result     : gndless_fixedpoint::Q4_23::Raw;
 
     always_comb {
-        // TODO verylのnative simulatorが2D配列のff内read-modify-writeをサポートしたら、
-        //      ffの受理時直接シフトへ戻してnext_historyを削除する
-        // historyのシフトは2D配列のread-modify-writeになりsimulatorがelaborateできないため、
-        // combでnext_historyを計算し、ffの受理時コピーのみで更新する。
         for channel in 0..CHANNELS {
-            next_history[channel][0] = input_samples[channel].raw;
-            for tap in 1..HISTORY_LENGTH {
-                next_history[channel][tap] = history[channel][tap - 1];
+            if write_addr[channel] == HISTORY_LENGTH - 1 {
+                next_write_addr[channel] = 0;
+            } else {
+                next_write_addr[channel] = write_addr[channel] + 1;
             }
         }
 
@@ -95,10 +118,37 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
             input_ready = true;
         }
 
-        left             = history[channel_index][pair_index];
-        right            = history[channel_index][HISTORY_LENGTH - 1 - pair_index];
-        pair_sum         = left + right;
-        coefficient      = COEFFICIENT_SET::VALUES[pair_index];
+        write_word_addr  = write_ch * HISTORY_LENGTH_U8 + write_addr[write_ch];
+        write_data       = frame_samples[write_ch];
+        history_write_en = state == Write;
+
+        if mac_cycle <= PAIR_COUNT_U8 {
+            issue_pair = mac_cycle;
+        } else {
+            issue_pair = PAIR_COUNT_U8;
+        }
+
+        // タップkは (write_addr - 1 - k) mod HISTORY_LENGTH にある。
+        // port Aはleftタップ(p)、port Bはrightタップ(HISTORY_LENGTH - 1 - p)を読む。
+        // rightタップの式は (write_addr + p) mod HISTORY_LENGTH に変形でき、
+        // p == PAIR_COUNTでoddタップ(DELAY)と一致するため、発行最終サイクルは
+        // port Bにoddタップを読ませる。
+        let wa              : u8 = write_addr[mac_channel];
+        let v_a             : u8 = wa + HISTORY_LENGTH_U8 - 1 - issue_pair;
+        let tap_a           : u8 = if v_a >= HISTORY_LENGTH_U8 ? v_a - HISTORY_LENGTH_U8 : v_a;
+        let v_b             : u8 = wa + issue_pair;
+        let tap_b           : u8 = if v_b >= HISTORY_LENGTH_U8 ? v_b - HISTORY_LENGTH_U8 : v_b;
+        read_addr_a_next = mac_channel * HISTORY_LENGTH_U8 + tap_a;
+        read_addr_b_next = mac_channel * HISTORY_LENGTH_U8 + tap_b;
+
+        pair_sum    = read_data_a + read_data_b;
+        var coeff_index: u8;
+        if issue_pair_q >= PAIR_COUNT_U8 {
+            coeff_index = PAIR_COUNT_U8 - 1;
+        } else {
+            coeff_index = issue_pair_q;
+        }
+        coefficient      = COEFFICIENT_SET::VALUES[coeff_index];
         product          = pair_sum * coefficient;
         product_ext      = $std::sign_extend::<product_t, accumulator_t>(product);
         next_accumulator = accumulator + product_ext;
@@ -110,48 +160,107 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
             RoundingMode::NEAREST_TIES_AWAY_FROM_ZERO,
             OverflowMode::SATURATE                   ,
         >(next_accumulator);
-        odd_result       = history[channel_index][DELAY];
     }
+
+    // 読み出しは登録アドレスに対するcomb読み出し(BUFFER_OUT=false)で、MACのprefetchパイプラインが
+    // 1clkレイテンシを吸収する。
+    inst history_left: $std::ram #(
+        WORD_SIZE : WORD_COUNT                    ,
+        DATA_TYPE : gndless_fixedpoint::Q4_23::Raw,
+        BUFFER_OUT: false                         ,
+        USE_RESET : false                         ,
+    ) (
+        i_clk : clk             ,
+        i_rst : rst             ,
+        i_clr : 1'b0            ,
+        i_mea : 1'b1            ,
+        i_wea : history_write_en,
+        i_adra: write_word_addr ,
+        i_da  : write_data      ,
+        i_meb : 1'b1            ,
+        i_adrb: read_addr_a     ,
+        o_qb  : read_data_a     ,
+    );
+
+    inst history_right: $std::ram #(
+        WORD_SIZE : WORD_COUNT                    ,
+        DATA_TYPE : gndless_fixedpoint::Q4_23::Raw,
+        BUFFER_OUT: false                         ,
+        USE_RESET : false                         ,
+    ) (
+        i_clk : clk             ,
+        i_rst : rst             ,
+        i_clr : 1'b0            ,
+        i_mea : 1'b1            ,
+        i_wea : history_write_en,
+        i_adra: write_word_addr ,
+        i_da  : write_data      ,
+        i_meb : 1'b1            ,
+        i_adrb: read_addr_b     ,
+        o_qb  : read_data_b     ,
+    );
 
     always_ff {
         if_reset {
-            state         = Idle;
-            channel_index = 0;
-            pair_index    = 0;
-            accumulator   = 0;
+            state        = Idle;
+            write_ch     = 0;
+            mac_channel  = 0;
+            mac_cycle    = 0;
+            issue_pair_q = 0;
+            accumulator  = 0;
+            read_addr_a  = 0;
+            read_addr_b  = 0;
             for channel in 0..CHANNELS {
-                even_samples[channel] = gndless_fixedpoint::Q4_23::ZERO;
-                odd_samples[channel]  = gndless_fixedpoint::Q4_23::ZERO;
-                for tap in 0..HISTORY_LENGTH {
-                    history[channel][tap] = gndless_fixedpoint::Q4_23::ZERO;
-                }
+                write_addr[channel]    = 0;
+                frame_samples[channel] = gndless_fixedpoint::Q4_23::ZERO;
+                even_samples[channel]  = gndless_fixedpoint::Q4_23::ZERO;
+                odd_samples[channel]   = gndless_fixedpoint::Q4_23::ZERO;
             }
         } else if state == Idle {
             if input_valid && input_ready {
                 for channel in 0..CHANNELS {
-                    for tap in 0..HISTORY_LENGTH {
-                        history[channel][tap] = next_history[channel][tap];
-                    }
+                    frame_samples[channel] = input_samples[channel].raw;
                 }
-                channel_index = 0;
-                pair_index    = 0;
-                accumulator   = 0;
-                state         = Mac;
+                write_ch = 0;
+                state    = Write;
+            }
+        } else if state == Write {
+            // 受理したframeを1 channelずつ両コピーへ書き込む。書き込み自体は
+            // history_write_enとwrite_word_addr/write_dataでRAMへ渡す。
+            for channel in 0..CHANNELS {
+                if channel == write_ch {
+                    write_addr[channel] = next_write_addr[channel];
+                }
+            }
+            if write_ch == CHANNELS - 1 {
+                mac_channel = 0;
+                mac_cycle   = 0;
+                state       = Mac;
+            } else {
+                write_ch = write_ch + 1;
             }
         } else if state == Mac {
-            if pair_index == COEFFICIENT_SET::PAIR_COUNT - 1 {
-                even_samples[channel_index] = even_result;
-                odd_samples[channel_index]  = odd_result;
-                if channel_index == CHANNELS - 1 {
+            read_addr_a  = read_addr_a_next;
+            read_addr_b  = read_addr_b_next;
+            issue_pair_q = issue_pair;
+            if mac_cycle == 0 {
+                accumulator = 0;
+            } else {
+                accumulator = next_accumulator;
+            }
+            if mac_cycle == PAIR_COUNT_U8 {
+                even_samples[mac_channel] = even_result;
+            }
+            if mac_cycle == PAIR_COUNT_U8 + 1 {
+                odd_samples[mac_channel] = read_data_b;
+                if mac_channel == CHANNELS - 1 {
                     state = OutputEven;
                 } else {
-                    channel_index += 1;
-                    pair_index    =  0;
-                    accumulator   =  0;
+                    mac_channel = mac_channel + 1;
+                    mac_cycle   = 0;
                 }
             } else {
-                pair_index  += 1;
-                accumulator =  next_accumulator;
+                mac_cycle = mac_cycle + 1;
             }
         } else if state == OutputEven {
             state = OutputOdd;
@@ -177,8 +286,6 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
                 output_samples[channel].raw = odd_samples[channel];
             }
         } else {
-            // output_samplesの0クリアはデバッグ時の波形の分かりやすさのためのもので、動作上は必須ではない。
-            // validがLowのときのoutput_samplesはdon't careなので、保持しても構わない。
             output_valid = false;
             for channel in 0..CHANNELS {
                 output_samples[channel].raw = gndless_fixedpoint::Q4_23::ZERO;
@@ -193,6 +300,8 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
 /// 39 tap setの係数和は2 * sum(VALUES) = 2^17 + 2なので、DC入力Vに対するeven phase出力は
 /// V + (V >> 16)に剰余なしで一致する。odd phaseは中央tapを通過した入力の遅延恒等で、
 /// 入力からDELAY (PAIR_COUNT - 1) frame前の値をそのまま出力する。
+/// 判定はDCフェーズをHISTORY_LENGTH (20) frame分投入した後の出力で行い、
+/// 起動過渡の不定値(history初期値)は対象外とする。
 #[test(test_halfband_upsampler)]
 module test_halfband_upsampler {
     const PAIR_COUNT: u8  = 10;
@@ -228,7 +337,7 @@ module test_halfband_upsampler {
         rst.assert();
         clk.next(1);
 
-        // DCフェーズ: 20 frame分を一定値で投入し、最後のframeのeven/oddを判定する
+        // DCフェーズ: HISTORY_LENGTH分を含む20 frameを一定値で投入し、最後のframeのeven/oddを判定する
         for _frame in 0..20 {
             for _i in 0..100 {
                 if input_ready {
@@ -293,6 +402,137 @@ module test_halfband_upsampler {
         $assert(
             output_samples[1].raw == 27'sd200,
             "halfband odd phase must output the input of DELAY frames before (ch1)",
+        );
+        $finish();
+    }
+}
+
+/// 4ch構成で`Halfband103Q1_17`を使い、DC応答とodd位相の遅延恒等を検証
+///
+/// 103 tap setの係数和はsum(VALUES) = 2^16 - 1なので、DC入力Vに対するeven phase出力は
+/// V - (V >> 16)に剰余なしで一致する。odd phaseは入力からDELAY (PAIR_COUNT - 1) frame前の
+/// 値をそのまま出力する。判定はDCフェーズをHISTORY_LENGTH (52) frame分投入した後の出力で行い、
+/// 起動過渡の不定値(history初期値)は対象外とする。
+#[test(test_halfband_upsampler_4ch)]
+module test_halfband_upsampler_4ch {
+    const DELAY: u32 = 25;
+
+    inst clk: $tb::clock_gen;
+    inst rst: $tb::reset_gen ( clk );
+
+    var input_valid : bbool;
+    var input_ready : bbool;
+    var output_valid: bbool;
+
+    inst input_samples : gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
+    inst output_samples: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
+
+    inst dut: HalfbandUpsampler::<Halfband103Q1_17> #(
+        CHANNELS: 4,
+    ) (
+        clk           : clk           ,
+        rst           : rst           ,
+        input_valid   : input_valid   ,
+        input_ready   : input_ready   ,
+        input_samples : input_samples ,
+        output_valid  : output_valid  ,
+        output_samples: output_samples,
+    );
+
+    initial {
+        input_valid = false;
+        for i in 0..4 {
+            input_samples[i].raw = gndless_fixedpoint::Q4_23::ZERO;
+        }
+        rst.assert();
+        clk.next(1);
+
+        // DCフェーズ: HISTORY_LENGTH分を含む60 frameを一定値で投入し、even/oddを判定する
+        for _frame in 0..60 {
+            for _i in 0..200 {
+                if input_ready {
+                    break;
+                }
+                clk.next(1);
+            }
+            input_samples[0].raw = gndless_fixedpoint::Q4_23::ONE;
+            input_samples[1].raw = gndless_fixedpoint::Q4_23::NEG_ONE;
+            input_samples[2].raw = 27'sd4_194_304;
+            input_samples[3].raw = -27'sd4_194_304;
+            input_valid          = true;
+            clk.next(1);
+            input_valid = false;
+        }
+        for _i in 0..200 {
+            if output_valid {
+                break;
+            }
+            clk.next(1);
+        }
+        // 103 tap setのeven DC gainは 1 - 2^-16
+        $assert(
+            output_samples[0].raw == gndless_fixedpoint::Q4_23::ONE - 27'sd128,
+            "halfband 4ch even phase DC gain (ch0) mismatch",
+        );
+        $assert(
+            output_samples[1].raw == gndless_fixedpoint::Q4_23::NEG_ONE + 27'sd128,
+            "halfband 4ch even phase DC gain (ch1) mismatch",
+        );
+        $assert(output_samples[2].raw == 27'sd4_194_240, "halfband 4ch even phase DC gain (ch2) mismatch");
+        $assert(output_samples[3].raw == -27'sd4_194_240, "halfband 4ch even phase DC gain (ch3) mismatch");
+        clk.next(1);
+        $assert(
+            output_samples[0].raw == gndless_fixedpoint::Q4_23::ONE,
+            "halfband 4ch odd phase identity (ch0) mismatch",
+        );
+        $assert(
+            output_samples[1].raw == gndless_fixedpoint::Q4_23::NEG_ONE,
+            "halfband 4ch odd phase identity (ch1) mismatch",
+        );
+        $assert(output_samples[2].raw == 27'sd4_194_304, "halfband 4ch odd phase identity (ch2) mismatch");
+        $assert(output_samples[3].raw == -27'sd4_194_304, "halfband 4ch odd phase identity (ch3) mismatch");
+        clk.next(1);
+        $assert(!output_valid, "halfband 4ch output must be a two-cycle burst");
+
+        // rampフェーズ: 可変入力を投入し、odd phaseがDELAY frame前の入力と一致することを確認する。
+        // 最後の出力(60 + 30 - 1 frame目)のoddはDELAY=25前のframe、すなわちramp 4 frame目になる。
+        for frame in 0..30 {
+            for _i in 0..200 {
+                if input_ready {
+                    break;
+                }
+                clk.next(1);
+            }
+            input_samples[0].raw = (1000 + frame * 10) as gndless_fixedpoint::Q4_23::Raw;
+            input_samples[1].raw = (2000 + frame * 10) as gndless_fixedpoint::Q4_23::Raw;
+            input_samples[2].raw = (3000 + frame * 10) as gndless_fixedpoint::Q4_23::Raw;
+            input_samples[3].raw = (4000 + frame * 10) as gndless_fixedpoint::Q4_23::Raw;
+            input_valid          = true;
+            clk.next(1);
+            input_valid = false;
+        }
+        for _i in 0..200 {
+            if output_valid {
+                break;
+            }
+            clk.next(1);
+        }
+        clk.next(1);
+        $assert(
+            output_samples[0].raw == 27'sd1040,
+            "halfband 4ch odd phase must output the input of DELAY frames before (ch0)",
+        );
+        $assert(
+            output_samples[1].raw == 27'sd2040,
+            "halfband 4ch odd phase must output the input of DELAY frames before (ch1)",
+        );
+        $assert(
+            output_samples[2].raw == 27'sd3040,
+            "halfband 4ch odd phase must output the input of DELAY frames before (ch2)",
+        );
+        $assert(
+            output_samples[3].raw == 27'sd4040,
+            "halfband 4ch odd phase must output the input of DELAY frames before (ch3)",
         );
         $finish();
     }

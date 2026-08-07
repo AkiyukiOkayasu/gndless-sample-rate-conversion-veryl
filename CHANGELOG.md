@@ -8,6 +8,7 @@
 
 ### Changed
 
+- `HalfbandUpsampler`のhistoryをFFシフト配列からSRAM推論対応の`$std::ram`循環バッファ(2コピー)へ変更した。SRAM推論のためhistoryはresetを持たず、最初のHISTORY_LENGTH frame分の出力は不定値を含む。MACは同期読み出し(1clkレイテンシ)をprefetchパイプラインで吸収し、1 pair/cycleを維持する
 - `gndless_fixedpoint`依存を公開済みの0.2.2へ更新
 
 ## BREAKING CHANGE

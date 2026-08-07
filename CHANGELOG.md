@@ -1,15 +1,19 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.0] - 2026-08-07
 
 ### Added
 
 - `HalfbandUpsampler`（複数channelを1個のMACでTDM処理する2x halfband upsampler）を追加。既定係数setは`Halfband103Q1_17`
 - `BurstFifo`（2 sample burstを吸収するdepth-2のvalid/ready FIFO）を追加。`HalfbandUpsampler`の2クロックburst出力を間欠的な入力readyの次段へ引き渡すために使う
+- 4ch・2段cascade・burst入力(S/MUX相当)・BurstFifo・LinearAsrcのNative Testを追加
 
 ### Changed
 
-- `HalfbandUpsampler`のhistoryをFFシフト配列からSRAM推論対応の`$std::ram`循環バッファ(2コピー)へ変更した。SRAM推論のためhistoryはresetを持たず、最初のHISTORY_LENGTH frame分の出力は不定値を含む。MACは同期読み出し(1clkレイテンシ)をprefetchパイプラインで吸収し、1 pair/cycleを維持する
+- `HalfbandUpsampler`のhistoryをFFシフト配列からBSRAM推論対応のinline配列循環バッファ(2コピー)へ変更した。登録アドレス+登録出力を同一always_ffで行いGowinのBSRAM推論に適合させる。SRAM推論のためhistoryはresetを持たず、最初のHISTORY_LENGTH frame分の出力は不定値を含む。MACは同期読み出し(2clkレイテンシ)をprefetchパイプラインで吸収し、1 pair/cycleを維持する
+- `LinearAsrc`の線形補間を3段パイプライン化した。乗算パスを分割してFmax 50MHz超を確保し、出力は窓確定から3clk後に現れる。丸め方式は変更なし
+- Gowin合成のprocedural for制約(interface配列の定数選択不可)に対応し、modport配列をgenerate assignでplain配列へコピーして使う
+- `Veryl.toml`に`clock_type`/`reset_type`を明示し、stdモジュールのリセット極性を利用側(sync_high)と一致させた
 - `gndless_fixedpoint`依存を公開済みの0.2.2へ更新
 
 ## BREAKING CHANGE

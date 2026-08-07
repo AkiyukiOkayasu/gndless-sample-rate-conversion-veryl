@@ -27,9 +27,9 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
     rst           : input   reset                                                                                   , /// reset
     input_valid   : input   bbool                                                                                   , /// input frame vector valid
     input_ready   : output  bbool                                                                                   , /// input frame vector ready
-    input_samples : modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23>::input_port  [CHANNELS], /// Q3.24 input frame vector
+    input_samples : modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23>::input_port  [CHANNELS], /// Q4.23 input frame vector
     output_valid  : output  bbool                                                                                   , /// output vector valid
-    output_samples: modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23>::output_port [CHANNELS], /// Q3.24 output frame vector
+    output_samples: modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23>::output_port [CHANNELS], /// Q4.23 output frame vector
 ) {
     const HISTORY_LENGTH: u32 = COEFFICIENT_SET::PAIR_COUNT * 2;
     const DELAY         : u32 = COEFFICIENT_SET::PAIR_COUNT - 1;

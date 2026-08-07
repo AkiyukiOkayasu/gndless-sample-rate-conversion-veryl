@@ -5,6 +5,7 @@
 ### Added
 
 - `HalfbandUpsampler`（複数channelを1個のMACでTDM処理する2x halfband upsampler）を追加。既定係数setは`Halfband103Q1_17`
+- `BurstFifo`（2 sample burstを吸収するdepth-2のvalid/ready FIFO）を追加。`HalfbandUpsampler`の2クロックburst出力を間欠的な入力readyの次段へ引き渡すために使う
 
 ### Changed
 

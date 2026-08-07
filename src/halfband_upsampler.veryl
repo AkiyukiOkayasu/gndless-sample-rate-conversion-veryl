@@ -537,3 +537,281 @@ module test_halfband_upsampler_4ch {
         $finish();
     }
 }
+
+/// 2段cascade(S1=103tap → BurstFifo → S2=39tap)のDC応答とburst伝搬を検証
+///
+/// DC入力Vに対するS1のeven出力は V - 2^-16 (E)、odd出力はV(遅延恒等)である。
+/// S2の入力はEとVが交互に並ぶため、対称pairの和は常に E+V で一定になり、
+/// S2のeven出力は round((E+V) * sum(VALUES_39) / 2^17) に一致する。
+/// S2のodd出力は入力からDELAY(9) frame前の値で、EとVが交互に現れる。
+/// 段間のBurstFifoはS1の2クロックburstを欠落・順序反転なくS2へ渡す。
+#[test(test_halfband_upsampler_cascade)]
+module test_halfband_upsampler_cascade {
+    inst clk: $tb::clock_gen;
+    inst rst: $tb::reset_gen ( clk );
+
+    var input_valid : bbool;
+    var input_ready : bbool;
+    var output_valid: bbool;
+
+    inst input_samples : gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
+    inst output_samples: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
+
+    var mid_valid: bbool;
+    var mid_ready: bbool;
+    var s2_valid : bbool;
+    var s2_ready : bbool;
+    inst mid_samples: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
+    inst s2_samples : gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
+
+    inst s1: HalfbandUpsampler::<Halfband103Q1_17> #(
+        CHANNELS: 4,
+    ) (
+        clk                        ,
+        rst                        ,
+        input_valid                ,
+        input_ready                ,
+        input_samples              ,
+        output_valid  : mid_valid  ,
+        output_samples: mid_samples,
+    );
+
+    inst mid_fifo: BurstFifo #(
+        CHANNELS: 4,
+    ) (
+        clk                        ,
+        rst                        ,
+        input_valid   : mid_valid  ,
+        input_ready   : mid_ready  ,
+        input_samples : mid_samples,
+        output_valid  : s2_valid   ,
+        output_ready  : s2_ready   ,
+        output_samples: s2_samples ,
+    );
+
+    inst s2: HalfbandUpsampler::<Halfband39Q1_17> #(
+        CHANNELS: 4,
+    ) (
+        clk                       ,
+        rst                       ,
+        input_valid   : s2_valid  ,
+        input_ready   : s2_ready  ,
+        input_samples : s2_samples,
+        output_valid              ,
+        output_samples            ,
+    );
+
+    initial {
+        input_valid = false;
+        for i in 0..4 {
+            input_samples[i].raw = gndless_fixedpoint::Q4_23::ZERO;
+        }
+        rst.assert();
+        clk.next(1);
+
+        // DCフェーズ: S1(52) + S2(20)分を含む130 frameを一定値で投入する
+        for _frame in 0..130 {
+            for _i in 0..300 {
+                if input_ready {
+                    break;
+                }
+                clk.next(1);
+            }
+            input_samples[0].raw = gndless_fixedpoint::Q4_23::ONE;
+            input_samples[1].raw = gndless_fixedpoint::Q4_23::NEG_ONE;
+            input_samples[2].raw = 27'sd4_194_304;
+            input_samples[3].raw = -27'sd4_194_304;
+            input_valid          = true;
+            clk.next(1);
+            input_valid = false;
+        }
+        for _i in 0..300 {
+            if output_valid {
+                break;
+            }
+            clk.next(1);
+        }
+
+        // S2のeven出力は round((E+V) * 65537 / 2^17)。
+        // ch0: V=2^23 → 8_388_672、ch1: -8_388_672、ch2: 4_194_336、ch3: -4_194_336
+        $assert(output_samples[0].raw == 27'sd8_388_672, "cascade even output (ch0) must be V + 64");
+        $assert(output_samples[1].raw == -27'sd8_388_672, "cascade even output (ch1) must be -(V + 64)");
+        $assert(output_samples[2].raw == 27'sd4_194_336, "cascade even output (ch2) must be V + 32");
+        $assert(output_samples[3].raw == -27'sd4_194_336, "cascade even output (ch3) must be -(V + 32)");
+
+        // S2のodd出力はE(= V - V>>16)とV(遅延恒等)が交互に現れる
+        var seen_odd_v: logic;
+        var seen_odd_e: logic;
+        seen_odd_v = 1'b0;
+        seen_odd_e = 1'b0;
+        for _burst in 0..4 {
+            for _i in 0..200 {
+                if output_valid {
+                    break;
+                }
+                clk.next(1);
+            }
+            clk.next(1);
+            $assert(output_valid, "cascade output must be a two-cycle burst");
+            let odd0: logic<27> = output_samples[0].raw;
+            if odd0 == gndless_fixedpoint::Q4_23::ONE {
+                seen_odd_v = 1'b1;
+            } else if odd0 == gndless_fixedpoint::Q4_23::ONE - 27'sd128 {
+                seen_odd_e = 1'b1;
+            }
+            $assert(
+                odd0 == gndless_fixedpoint::Q4_23::ONE || odd0 == gndless_fixedpoint::Q4_23::ONE - 27'sd128,
+                "cascade odd output (ch0) must be V or V - 2^-16",
+            );
+            let odd1: logic<27> = output_samples[1].raw;
+            $assert(
+                odd1 == gndless_fixedpoint::Q4_23::NEG_ONE || odd1 == gndless_fixedpoint::Q4_23::NEG_ONE + 27'sd128,
+                "cascade odd output (ch1) must be -V or -(V - 2^-16)",
+            );
+            let odd2: logic<27> = output_samples[2].raw;
+            $assert(
+                odd2 == 27'sd4_194_304 || odd2 == 27'sd4_194_240,
+                "cascade odd output (ch2) must be V or V - 2^-16",
+            );
+            let odd3: logic<27> = output_samples[3].raw;
+            $assert(
+                odd3 == -27'sd4_194_304 || odd3 == -27'sd4_194_240,
+                "cascade odd output (ch3) must be -V or -(V - 2^-16)",
+            );
+            clk.next(1);
+            $assert(!output_valid, "cascade output must be a two-cycle burst");
+            clk.next(1);
+        }
+        $assert(seen_odd_v && seen_odd_e, "cascade odd outputs must alternate between V and V - 2^-16");
+        $finish();
+    }
+}
+
+/// 2クロック連続のburst入力をfront BurstFifoが吸収し、2段cascadeへ順序を保って流すことを検証
+///
+/// S/MUX2相当のA/B burst(2 frame連続)をfront FIFOへ投入し、ready違反(取りこぼし)がなく
+/// DC値がcascadeを通して正しく出力されることを確認する。
+#[test(test_halfband_upsampler_burst_input)]
+module test_halfband_upsampler_burst_input {
+    inst clk: $tb::clock_gen;
+    inst rst: $tb::reset_gen ( clk );
+
+    var input_valid : bbool;
+    var input_ready : bbool;
+    var output_valid: bbool;
+    var ready_error : bbool;
+
+    inst input_samples : gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
+    inst output_samples: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
+
+    var front_valid: bbool;
+    var s1_ready   : bbool;
+    inst front_samples: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
+
+    var mid_valid: bbool;
+    var mid_ready: bbool;
+    var s2_valid : bbool;
+    var s2_ready : bbool;
+    inst mid_samples: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
+    inst s2_samples : gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
+
+    inst front_fifo: BurstFifo #(
+        CHANNELS: 4,
+    ) (
+        clk                          ,
+        rst                          ,
+        input_valid                  ,
+        input_ready                  ,
+        input_samples                ,
+        output_valid  : front_valid  ,
+        output_ready  : s1_ready     ,
+        output_samples: front_samples,
+    );
+
+    inst s1: HalfbandUpsampler::<Halfband103Q1_17> #(
+        CHANNELS: 4,
+    ) (
+        clk                          ,
+        rst                          ,
+        input_valid   : front_valid  ,
+        input_ready   : s1_ready     ,
+        input_samples : front_samples,
+        output_valid  : mid_valid    ,
+        output_samples: mid_samples  ,
+    );
+
+    inst mid_fifo: BurstFifo #(
+        CHANNELS: 4,
+    ) (
+        clk                        ,
+        rst                        ,
+        input_valid   : mid_valid  ,
+        input_ready   : mid_ready  ,
+        input_samples : mid_samples,
+        output_valid  : s2_valid   ,
+        output_ready  : s2_ready   ,
+        output_samples: s2_samples ,
+    );
+
+    inst s2: HalfbandUpsampler::<Halfband39Q1_17> #(
+        CHANNELS: 4,
+    ) (
+        clk                       ,
+        rst                       ,
+        input_valid   : s2_valid  ,
+        input_ready   : s2_ready  ,
+        input_samples : s2_samples,
+        output_valid              ,
+        output_samples            ,
+    );
+
+    always_ff (clk, rst) {
+        if_reset {
+            ready_error = false;
+        } else if input_valid && !input_ready {
+            ready_error = true;
+        }
+    }
+
+    initial {
+        input_valid = false;
+        for i in 0..4 {
+            input_samples[i].raw = gndless_fixedpoint::Q4_23::ZERO;
+        }
+        rst.assert();
+        clk.next(1);
+
+        // A/B burst: front FIFOが空になるのを待ってから2 frame連続で投入する
+        for _burst in 0..90 {
+            for _i in 0..400 {
+                if !front_valid {
+                    break;
+                }
+                clk.next(1);
+            }
+            input_samples[0].raw = gndless_fixedpoint::Q4_23::ONE;
+            input_samples[1].raw = gndless_fixedpoint::Q4_23::NEG_ONE;
+            input_samples[2].raw = 27'sd4_194_304;
+            input_samples[3].raw = -27'sd4_194_304;
+            input_valid          = true;
+            clk.next(1);
+            input_valid = true;
+            clk.next(1);
+            input_valid = false;
+        }
+        clk.next(64);
+        $assert(!ready_error, "burst input must never be dropped by the front fifo");
+
+        for _i in 0..300 {
+            if output_valid {
+                break;
+            }
+            clk.next(1);
+        }
+        $assert(output_samples[0].raw == 27'sd8_388_672, "burst input cascade even output (ch0) must be V + 64");
+        $assert(output_samples[1].raw == -27'sd8_388_672, "burst input cascade even output (ch1) must be -(V + 64)");
+        $assert(output_samples[2].raw == 27'sd4_194_336, "burst input cascade even output (ch2) must be V + 32");
+        $assert(output_samples[3].raw == -27'sd4_194_336, "burst input cascade even output (ch3) must be -(V + 32)");
+        $finish();
+    }
+}

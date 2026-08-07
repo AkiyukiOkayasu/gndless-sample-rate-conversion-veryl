@@ -1,0 +1,183 @@
+/// 2 sampleまでを吸収するdepth-2のvalid/ready FIFO。
+///
+/// 書き込み側は2クロック連続のburst書き込みを吸収でき、`input_ready`は空きがある間Highになる。
+/// 読み出し側は`output_valid && output_ready`でpopする。書き込みから読み出しまでのレイテンシーは
+/// 1クロックで、burst書き込みとpopが同時に起きても失われない。
+/// 主に`HalfbandUpsampler`の2クロックburst出力を、入力readyが間欠的な次段へ引き渡すために使う。
+pub module BurstFifo #(
+    param CHANNELS: u8 = 4, /// 1 wordあたりのchannel数
+) (
+    clk           : input   clock                                                                                   , /// system clock
+    rst           : input   reset                                                                                   , /// reset
+    input_valid   : input   bbool                                                                                   , /// write valid
+    input_ready   : output  bbool                                                                                   , /// write ready (空きがある)
+    input_samples : modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23>::input_port  [CHANNELS], /// Q4.23 write word
+    output_valid  : output  bbool                                                                                   , /// read valid (データあり)
+    output_ready  : input   bbool                                                                                   , /// read ready
+    output_samples: modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23>::output_port [CHANNELS], /// Q4.23 read word
+) {
+    var buffer   : gndless_fixedpoint::Q4_23::Raw    [2, CHANNELS];
+    var write_ptr: bbool                                          ;
+    var read_ptr : bbool                                          ;
+    var count    : logic                         <2>              ;
+
+    var push: logic;
+    var pop : logic;
+
+    always_comb {
+        if count == 2'd2 {
+            input_ready = false;
+        } else {
+            input_ready = true;
+        }
+        if count == 2'd0 {
+            output_valid = false;
+        } else {
+            output_valid = true;
+        }
+        push = input_valid && input_ready;
+        pop  = output_valid && output_ready;
+    }
+
+    always_ff {
+        if_reset {
+            write_ptr = false;
+            read_ptr  = false;
+            count     = 2'd0;
+            for channel in 0..CHANNELS {
+                buffer[0][channel] = gndless_fixedpoint::Q4_23::ZERO;
+                buffer[1][channel] = gndless_fixedpoint::Q4_23::ZERO;
+            }
+        } else {
+            if push {
+                if write_ptr {
+                    for channel in 0..CHANNELS {
+                        buffer[1][channel] = input_samples[channel].raw;
+                    }
+                } else {
+                    for channel in 0..CHANNELS {
+                        buffer[0][channel] = input_samples[channel].raw;
+                    }
+                }
+                write_ptr = !write_ptr;
+            }
+            if pop {
+                read_ptr = !read_ptr;
+            }
+            if push && !pop {
+                count = count + 2'd1;
+            } else if !push && pop {
+                count = count - 2'd1;
+            }
+        }
+    }
+
+    var read_slot: logic<2>;
+    always_comb {
+        if read_ptr {
+            read_slot = 2'd1;
+        } else {
+            read_slot = 2'd0;
+        }
+    }
+
+    for channel in 0..CHANNELS :g_out {
+        assign output_samples[channel].raw = buffer[read_slot][channel];
+    }
+}
+
+/// BurstFifoが2クロック連続のburst書き込みを順序を保って吸収し、読み出せることを検証
+#[test(test_burst_fifo)]
+module test_burst_fifo {
+    inst clk: $tb::clock_gen;
+    inst rst: $tb::reset_gen ( clk );
+
+    var input_valid : bbool;
+    var input_ready : bbool;
+    var output_valid: bbool;
+    var output_ready: bbool;
+
+    inst input_samples : gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [2];
+    inst output_samples: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [2];
+
+    inst dut: BurstFifo #(
+        CHANNELS: 2,
+    ) (
+        clk             ,
+        rst             ,
+        input_valid     ,
+        input_ready     ,
+        input_samples   ,
+        output_valid    ,
+        output_ready    ,
+        output_samples  ,
+    );
+
+    initial {
+        input_valid  = false;
+        output_ready = false;
+        for i in 0..2 {
+            input_samples[i].raw = gndless_fixedpoint::Q4_23::ZERO;
+        }
+        rst.assert();
+        clk.next(1);
+
+        // 1 word書き込み
+        input_valid          = true;
+        input_samples[0].raw = 27'sd100;
+        input_samples[1].raw = 27'sd200;
+        clk.next(1);
+        input_valid = false;
+        $assert(input_ready, "burst fifo must accept the first word");
+        $assert(output_valid, "burst fifo must be readable after one push");
+
+        // 2 word目を連続で書き込み(burst)
+        input_valid          = true;
+        input_samples[0].raw = 27'sd300;
+        input_samples[1].raw = 27'sd400;
+        clk.next(1);
+        input_valid = false;
+        $assert(!input_ready, "burst fifo must be full with two words");
+
+        // 1 word目を読み出す。popは次のエッジで起きるため、値の確認はpopエッジの前に行う
+        output_ready = true;
+        $assert(output_samples[0].raw == 27'sd100, "burst fifo must output the first word (ch0)");
+        $assert(output_samples[1].raw == 27'sd200, "burst fifo must output the first word (ch1)");
+        clk.next(1);
+
+        // 2 word目を読み出す
+        $assert(output_samples[0].raw == 27'sd300, "burst fifo must output the second word (ch0)");
+        $assert(output_samples[1].raw == 27'sd400, "burst fifo must output the second word (ch1)");
+        clk.next(1);
+
+        // 空になったらvalidはLow
+        $assert(!output_valid, "burst fifo must be empty after two pops");
+
+        // count=1の状態でpushするとpushとpopが同時に起きる。新しく書き込んだwordが
+        // 読み出しslotへ入り、失われないこと
+        input_valid          = true;
+        input_samples[0].raw = 27'sd500;
+        input_samples[1].raw = 27'sd600;
+        clk.next(1);
+        input_valid = false;
+        $assert(output_valid, "burst fifo must be readable after push");
+
+        input_valid          = true;
+        input_samples[0].raw = 27'sd700;
+        input_samples[1].raw = 27'sd800;
+        clk.next(1);
+        input_valid = false;
+        $assert(output_valid, "burst fifo must keep one word under concurrent push/pop");
+        $assert(
+            output_samples[0].raw == 27'sd700,
+            "burst fifo must keep the pushed word under concurrent push/pop (ch0)",
+        );
+        $assert(
+            output_samples[1].raw == 27'sd800,
+            "burst fifo must keep the pushed word under concurrent push/pop (ch1)",
+        );
+        clk.next(1);
+        $assert(!output_valid, "burst fifo must be drained after concurrent push/pop");
+        $finish();
+    }
+}

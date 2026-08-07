@@ -84,6 +84,7 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
 
     // MACのprefetchパイプライン。issue_pairは発行中のpairで、PAIR_COUNTと等しいときは
     // oddタップの読み出しを意味する。issue_pair_qは前サイクルに発行したpairで、係数選択に使う。
+    // 読み出し2clk+積1clkのレイテンシを持ち、積算は積レジスタ(product_q)から行う。
     var issue_pair   : u8           ;
     var issue_pair_q : u8           ;
     var issue_pair_q2: u8           ;
@@ -115,6 +116,7 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
     var pair_sum        : gndless_fixedpoint::Q4_23::Raw;
     var coefficient     : COEFFICIENT_SET::Value        ;
     var product         : product_t                     ;
+    var product_q       : product_t                     ;
     var product_ext     : accumulator_t                 ;
     var next_accumulator: accumulator_t                 ;
     var even_result     : gndless_fixedpoint::Q4_23::Raw;
@@ -163,10 +165,11 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
         } else {
             coeff_index = issue_pair_q2;
         }
-        coefficient      = COEFFICIENT_SET::VALUES[coeff_index];
-        product          = pair_sum * coefficient;
-        product_ext      = $std::sign_extend::<product_t, accumulator_t>(product);
-        next_accumulator = accumulator + product_ext;
+        coefficient = COEFFICIENT_SET::VALUES[coeff_index];
+        product     = pair_sum * coefficient;
+        product_ext = $std::sign_extend::<product_t, accumulator_t>(product);
+        // 積はレジスタに載せ、乗算を積算パスから外してFmaxを確保する
+        next_accumulator = accumulator + $std::sign_extend::<product_t, accumulator_t>(product_q);
         even_result      = gndless_fixedpoint::resize::<
             ACCUMULATOR_WIDTH                        ,
             INPUT_FRAC                               ,
@@ -185,6 +188,7 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
             mac_cycle     = 0;
             issue_pair_q  = 0;
             issue_pair_q2 = 0;
+            product_q     = 0;
             accumulator   = 0;
             read_addr_a   = 0;
             read_addr_b   = 0;
@@ -228,17 +232,16 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
             read_addr_b   = read_addr_b_next;
             issue_pair_q  = issue_pair;
             issue_pair_q2 = issue_pair_q;
-            if mac_cycle <= 1 {
+            product_q     = product;
+            if mac_cycle <= 2 {
                 // 初回2サイクルは読み出しパイプラインの無効データが届くため積算しない
                 accumulator = 0;
             } else {
                 accumulator = next_accumulator;
             }
-            if mac_cycle == PAIR_COUNT_U8 + 1 {
-                even_samples[mac_channel] = even_result;
-            }
             if mac_cycle == PAIR_COUNT_U8 + 2 {
-                odd_samples[mac_channel] = read_data_b;
+                even_samples[mac_channel] = even_result;
+                odd_samples[mac_channel]  = read_data_b;
                 if mac_channel == CHANNELS - 1 {
                     state = OutputEven;
                 } else {

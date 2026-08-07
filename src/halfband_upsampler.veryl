@@ -66,14 +66,17 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
     }
     import State::*;
 
-    // historyは1W1RのSRAM推論RAM(`$std::ram`)をleft/rightの2コピー持つ。
+    // historyはBSRAM推論のためresetを持たないplain配列をleft/rightの2コピー持つ。
+    // 読み出しは同一always_ff内の登録アドレス+登録出力で行い、GowinのBSRAM推論に適合させる。
     // resetを持たないため初期値は不定で、最初のHISTORY_LENGTH frame分の出力に不定値が含まれる。
     // ストリームが進めば即座に実データへ置き換わる。
-    var history_write_en: logic                                    ;
-    var write_addr      : u8                             [CHANNELS];
-    var next_write_addr : u8                             [CHANNELS];
-    var frame_samples   : gndless_fixedpoint::Q4_23::Raw [CHANNELS];
-    var write_ch        : u8                                       ;
+    var history_left    : gndless_fixedpoint::Q4_23::Raw [WORD_COUNT];
+    var history_right   : gndless_fixedpoint::Q4_23::Raw [WORD_COUNT];
+    var history_write_en: logic                                      ;
+    var write_addr      : u8                             [CHANNELS]  ;
+    var next_write_addr : u8                             [CHANNELS]  ;
+    var frame_samples   : gndless_fixedpoint::Q4_23::Raw [CHANNELS]  ;
+    var write_ch        : u8                                         ;
 
     var state      : State;
     var mac_channel: u8   ;
@@ -81,14 +84,26 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
 
     // MACのprefetchパイプライン。issue_pairは発行中のpairで、PAIR_COUNTと等しいときは
     // oddタップの読み出しを意味する。issue_pair_qは前サイクルに発行したpairで、係数選択に使う。
-    var issue_pair  : u8           ;
-    var issue_pair_q: u8           ;
-    var accumulator : accumulator_t;
+    var issue_pair   : u8           ;
+    var issue_pair_q : u8           ;
+    var issue_pair_q2: u8           ;
+    var accumulator  : accumulator_t;
 
     var read_addr_a: u8                            ;
     var read_addr_b: u8                            ;
     var read_data_a: gndless_fixedpoint::Q4_23::Raw;
     var read_data_b: gndless_fixedpoint::Q4_23::Raw;
+
+    // Gowin合成はprocedural forでinterface配列要素を定数選択できないため、
+    // generate assignでplain配列へコピーして使う。
+    var input_raw : gndless_fixedpoint::Q4_23::Raw [CHANNELS];
+    var output_raw: gndless_fixedpoint::Q4_23::Raw [CHANNELS];
+    for channel in 0..CHANNELS :g_in {
+        assign input_raw[channel] = input_samples[channel].raw;
+    }
+    for channel in 0..CHANNELS :g_out {
+        assign output_samples[channel].raw = output_raw[channel];
+    }
 
     var even_samples: gndless_fixedpoint::Q4_23::Raw [CHANNELS];
     var odd_samples : gndless_fixedpoint::Q4_23::Raw [CHANNELS];
@@ -143,10 +158,10 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
 
         pair_sum    = read_data_a + read_data_b;
         var coeff_index: u8;
-        if issue_pair_q >= PAIR_COUNT_U8 {
+        if issue_pair_q2 >= PAIR_COUNT_U8 {
             coeff_index = PAIR_COUNT_U8 - 1;
         } else {
-            coeff_index = issue_pair_q;
+            coeff_index = issue_pair_q2;
         }
         coefficient      = COEFFICIENT_SET::VALUES[coeff_index];
         product          = pair_sum * coefficient;
@@ -162,54 +177,19 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
         >(next_accumulator);
     }
 
-    // 読み出しは登録アドレスに対するcomb読み出し(BUFFER_OUT=false)で、MACのprefetchパイプラインが
-    // 1clkレイテンシを吸収する。
-    inst history_left: $std::ram #(
-        WORD_SIZE : WORD_COUNT                    ,
-        DATA_TYPE : gndless_fixedpoint::Q4_23::Raw,
-        BUFFER_OUT: false                         ,
-        USE_RESET : false                         ,
-    ) (
-        i_clk : clk             ,
-        i_rst : rst             ,
-        i_clr : 1'b0            ,
-        i_mea : 1'b1            ,
-        i_wea : history_write_en,
-        i_adra: write_word_addr ,
-        i_da  : write_data      ,
-        i_meb : 1'b1            ,
-        i_adrb: read_addr_a     ,
-        o_qb  : read_data_a     ,
-    );
-
-    inst history_right: $std::ram #(
-        WORD_SIZE : WORD_COUNT                    ,
-        DATA_TYPE : gndless_fixedpoint::Q4_23::Raw,
-        BUFFER_OUT: false                         ,
-        USE_RESET : false                         ,
-    ) (
-        i_clk : clk             ,
-        i_rst : rst             ,
-        i_clr : 1'b0            ,
-        i_mea : 1'b1            ,
-        i_wea : history_write_en,
-        i_adra: write_word_addr ,
-        i_da  : write_data      ,
-        i_meb : 1'b1            ,
-        i_adrb: read_addr_b     ,
-        o_qb  : read_data_b     ,
-    );
-
     always_ff {
         if_reset {
-            state        = Idle;
-            write_ch     = 0;
-            mac_channel  = 0;
-            mac_cycle    = 0;
-            issue_pair_q = 0;
-            accumulator  = 0;
-            read_addr_a  = 0;
-            read_addr_b  = 0;
+            state         = Idle;
+            write_ch      = 0;
+            mac_channel   = 0;
+            mac_cycle     = 0;
+            issue_pair_q  = 0;
+            issue_pair_q2 = 0;
+            accumulator   = 0;
+            read_addr_a   = 0;
+            read_addr_b   = 0;
+            read_data_a   = gndless_fixedpoint::Q4_23::ZERO;
+            read_data_b   = gndless_fixedpoint::Q4_23::ZERO;
             for channel in 0..CHANNELS {
                 write_addr[channel]    = 0;
                 frame_samples[channel] = gndless_fixedpoint::Q4_23::ZERO;
@@ -219,14 +199,15 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
         } else if state == Idle {
             if input_valid && input_ready {
                 for channel in 0..CHANNELS {
-                    frame_samples[channel] = input_samples[channel].raw;
+                    frame_samples[channel] = input_raw[channel];
                 }
                 write_ch = 0;
                 state    = Write;
             }
         } else if state == Write {
-            // 受理したframeを1 channelずつ両コピーへ書き込む。書き込み自体は
-            // history_write_enとwrite_word_addr/write_dataでRAMへ渡す。
+            // 受理したframeを1 channelずつ両コピーへ書き込む。
+            history_left[write_word_addr]  = write_data;
+            history_right[write_word_addr] = write_data;
             for channel in 0..CHANNELS {
                 if channel == write_ch {
                     write_addr[channel] = next_write_addr[channel];
@@ -240,18 +221,23 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
                 write_ch = write_ch + 1;
             }
         } else if state == Mac {
-            read_addr_a  = read_addr_a_next;
-            read_addr_b  = read_addr_b_next;
-            issue_pair_q = issue_pair;
-            if mac_cycle == 0 {
+            // BSRAM推論: 登録アドレスから登録出力へ読み出す(発行から2clk後に入力に現れる)
+            read_data_a   = history_left[read_addr_a];
+            read_data_b   = history_right[read_addr_b];
+            read_addr_a   = read_addr_a_next;
+            read_addr_b   = read_addr_b_next;
+            issue_pair_q  = issue_pair;
+            issue_pair_q2 = issue_pair_q;
+            if mac_cycle <= 1 {
+                // 初回2サイクルは読み出しパイプラインの無効データが届くため積算しない
                 accumulator = 0;
             } else {
                 accumulator = next_accumulator;
             }
-            if mac_cycle == PAIR_COUNT_U8 {
+            if mac_cycle == PAIR_COUNT_U8 + 1 {
                 even_samples[mac_channel] = even_result;
             }
-            if mac_cycle == PAIR_COUNT_U8 + 1 {
+            if mac_cycle == PAIR_COUNT_U8 + 2 {
                 odd_samples[mac_channel] = read_data_b;
                 if mac_channel == CHANNELS - 1 {
                     state = OutputEven;
@@ -273,22 +259,22 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
         if_reset {
             output_valid = false;
             for channel in 0..CHANNELS {
-                output_samples[channel].raw = gndless_fixedpoint::Q4_23::ZERO;
+                output_raw[channel] = gndless_fixedpoint::Q4_23::ZERO;
             }
         } else if state == OutputEven {
             output_valid = true;
             for channel in 0..CHANNELS {
-                output_samples[channel].raw = even_samples[channel];
+                output_raw[channel] = even_samples[channel];
             }
         } else if state == OutputOdd {
             output_valid = true;
             for channel in 0..CHANNELS {
-                output_samples[channel].raw = odd_samples[channel];
+                output_raw[channel] = odd_samples[channel];
             }
         } else {
             output_valid = false;
             for channel in 0..CHANNELS {
-                output_samples[channel].raw = gndless_fixedpoint::Q4_23::ZERO;
+                output_raw[channel] = gndless_fixedpoint::Q4_23::ZERO;
             }
         }
     }

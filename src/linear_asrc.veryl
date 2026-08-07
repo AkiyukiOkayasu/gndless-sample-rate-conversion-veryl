@@ -1,3 +1,4 @@
+import gndless_fixedpoint::Types::{RoundingMode, OverflowMode};
 /// FIFOから入力窓を補充しながら、50MHzの全クロックで線形補間値を出力するASRC
 ///
 /// 入力はシステムクロックと非同期(非ロック)の外部クロック由来で、レートは`PhaseIncrementEstimator`と`FractionalPhaseAccumulator`が計測・追従する。
@@ -53,6 +54,19 @@ module LinearAsrcCore #(
     var window_count    : logic       <2>           ;
     var primed          : bbool                     ;
     var interpolated    : signed logic<SAMPLE_WIDTH>;
+    var interpolated_q  : signed logic<SAMPLE_WIDTH>;
+
+    // 線形補間は乗算を含むためFmax確保のため3段パイプラインで計算する。
+    // 丸めはgndless_interpolation::LinearInterpolatorCoreと同じresizeで行う。
+    const DELTA_WIDTH    : u32                         = SAMPLE_WIDTH;
+    const PHASE_EXT_WIDTH: u32                         = PHASE_WIDTH + 1;
+    const PRODUCT_WIDTH  : u32                         = DELTA_WIDTH + PHASE_EXT_WIDTH;
+    const NUM_WIDTH      : u32                         = PRODUCT_WIDTH + 1;
+    var   delta_q        : signed logic<DELTA_WIDTH>  ;
+    var   phase_q        : logic       <PHASE_WIDTH>  ;
+    var   product_q      : signed logic<PRODUCT_WIDTH>;
+    var   sample0_q      : signed logic<SAMPLE_WIDTH> ;
+    var   sample0_qq     : signed logic<SAMPLE_WIDTH> ;
 
     inst input_fifo: $std::fifo #(
         WIDTH: SAMPLE_WIDTH              ,
@@ -72,15 +86,19 @@ module LinearAsrcCore #(
         o_data       : fifo_q          ,
     );
 
-    inst linear_interpolator: gndless_interpolation::LinearInterpolatorCore #(
-        SAMPLE_WIDTH: SAMPLE_WIDTH,
-        PHASE_WIDTH : PHASE_WIDTH ,
-    ) (
-        sample0: sample0     ,
-        sample1: sample1     ,
-        phase  : phase       ,
-        sample : interpolated,
-    );
+    always_comb {
+        // 最終段: sample0(2clk前) + product(1clk前)
+        let sample0_scaled: signed logic<NUM_WIDTH> = sample0_qq <<< PHASE_WIDTH;
+        let numerator     : signed logic<NUM_WIDTH> = sample0_scaled + product_q;
+        interpolated   = gndless_fixedpoint::resize::<
+            NUM_WIDTH                         ,
+            PHASE_WIDTH                       ,
+            SAMPLE_WIDTH                      ,
+            0                                 ,
+            RoundingMode::NEAREST_TIES_TO_EVEN,
+            OverflowMode::SATURATE            ,
+        >(numerator);
+    }
 
     always_comb {
         input_ready   = false;
@@ -93,7 +111,7 @@ module LinearAsrcCore #(
         }
         if primed {
             output_active = true;
-            output_sample = interpolated;
+            output_sample = interpolated_q;
         }
 
         fifo_push = input_valid && input_ready;
@@ -102,12 +120,24 @@ module LinearAsrcCore #(
 
     always_ff {
         if_reset {
-            sample0      = 0;
-            sample1      = 0;
-            window_count = 0;
-            primed       = false;
-            underflow    = false;
+            sample0        = 0;
+            sample1        = 0;
+            window_count   = 0;
+            primed         = false;
+            underflow      = false;
+            interpolated_q = 0;
+            delta_q        = 0;
+            phase_q        = 0;
+            product_q      = 0;
+            sample0_q      = 0;
+            sample0_qq     = 0;
         } else {
+            interpolated_q = interpolated;
+            delta_q        = sample1 - sample0;
+            phase_q        = phase;
+            product_q      = $signed({1'b0, phase_q}) * delta_q;
+            sample0_q      = sample0;
+            sample0_qq     = sample0_q;
             if fifo_pop {
                 if window_count == 2'd0 {
                     sample0      = fifo_q;
@@ -240,19 +270,22 @@ module test_linear_asrc {
         clk.next(1);
         input_valid = false;
 
+        // 出力は補間3段パイプラインを経由するため、確定まで3クロックかかる
         $assert(output_active, "linear ASRC must become active after priming");
         $assert(output_sample == 16'sd0, "linear ASRC must hold the initial window while priming");
         $assert(!underflow, "linear ASRC must not underflow with buffered input");
         $assert(input_level == 4'd2, "priming sample and unused burst sample must remain in the FIFO");
 
-        clk.next(1);
+        clk.next(3);
         $assert(output_sample == 16'sd25, "linear ASRC quarter phase mismatch");
         clk.next(1);
         $assert(output_sample == 16'sd50, "linear ASRC midpoint phase mismatch");
         clk.next(1);
         $assert(output_sample == 16'sd75, "linear ASRC three-quarter phase mismatch");
         clk.next(1);
-        $assert(output_sample == 16'sd100, "linear ASRC second window mismatch");
+        $assert(output_sample == 16'sd0, "linear ASRC phase wrap must reset the interpolator");
+        clk.next(1);
+        $assert(output_sample == 16'sd125, "linear ASRC second window mismatch");
         $assert(!underflow, "linear ASRC must keep the buffered stream running");
         $finish();
     }

@@ -21,6 +21,13 @@ pub module BurstFifo #(
     var read_ptr : bbool                                          ;
     var count    : logic                         <2>              ;
 
+    // Gowin合成はprocedural forでinterface配列要素を定数選択できないため、
+    // generate assignでplain配列へコピーして使う。
+    var input_raw: gndless_fixedpoint::Q4_23::Raw [CHANNELS];
+    for channel in 0..CHANNELS :g_in {
+        assign input_raw[channel] = input_samples[channel].raw;
+    }
+
     var push: logic;
     var pop : logic;
 
@@ -52,11 +59,11 @@ pub module BurstFifo #(
             if push {
                 if write_ptr {
                     for channel in 0..CHANNELS {
-                        buffer[1][channel] = input_samples[channel].raw;
+                        buffer[1][channel] = input_raw[channel];
                     }
                 } else {
                     for channel in 0..CHANNELS {
-                        buffer[0][channel] = input_samples[channel].raw;
+                        buffer[0][channel] = input_raw[channel];
                     }
                 }
                 write_ptr = !write_ptr;

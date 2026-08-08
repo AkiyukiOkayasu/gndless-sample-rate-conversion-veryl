@@ -106,6 +106,14 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
         assign output_samples[channel].raw = output_raw[channel];
     }
 
+    // チャンネルごとの語オフセットは定数であり、`channel * HISTORY_LENGTH`の乗算は
+    // Gowin合成でDSP(MULT12X12)へ推論される。generate展開した定数配列を動的インデックスで
+    // 選択(mux)することでDSP資源を節約する。
+    var channel_offset: u8 [CHANNELS];
+    for channel in 0..CHANNELS :g_ch_offset {
+        assign channel_offset[channel] = (channel as u8) * HISTORY_LENGTH_U8;
+    }
+
     var even_samples: gndless_fixedpoint::Q4_23::Raw [CHANNELS];
     var odd_samples : gndless_fixedpoint::Q4_23::Raw [CHANNELS];
 
@@ -135,7 +143,7 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
             input_ready = true;
         }
 
-        write_word_addr  = write_ch * HISTORY_LENGTH_U8 + write_addr[write_ch];
+        write_word_addr  = channel_offset[write_ch] + write_addr[write_ch];
         write_data       = frame_samples[write_ch];
         history_write_en = state == Write;
 
@@ -155,8 +163,8 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
         let tap_a           : u8 = if v_a >= HISTORY_LENGTH_U8 ? v_a - HISTORY_LENGTH_U8 : v_a;
         let v_b             : u8 = wa + issue_pair;
         let tap_b           : u8 = if v_b >= HISTORY_LENGTH_U8 ? v_b - HISTORY_LENGTH_U8 : v_b;
-        read_addr_a_next = mac_channel * HISTORY_LENGTH_U8 + tap_a;
-        read_addr_b_next = mac_channel * HISTORY_LENGTH_U8 + tap_b;
+        read_addr_a_next = channel_offset[mac_channel] + tap_a;
+        read_addr_b_next = channel_offset[mac_channel] + tap_b;
 
         pair_sum    = read_data_a + read_data_b;
         var coeff_index: u8;

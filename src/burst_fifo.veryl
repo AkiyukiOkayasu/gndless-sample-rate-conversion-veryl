@@ -1,11 +1,14 @@
-/// 2 sampleまでを吸収するdepth-2のvalid/ready FIFO。
+/// 複数sampleまでを吸収するvalid/ready FIFO。
 ///
-/// 書き込み側は2クロック連続のburst書き込みを吸収でき、`input_ready`は空きがある間Highになる。
+/// 書き込み側は連続したburst書き込みを吸収でき、`input_ready`は空きがある間Highになる。
 /// 読み出し側は`output_valid && output_ready`でpopする。書き込みから読み出しまでのレイテンシーは
 /// 1クロックで、burst書き込みとpopが同時に起きても失われない。
 /// 主に`HalfbandUpsampler`の2クロックburst出力を、入力readyが間欠的な次段へ引き渡すために使う。
+/// 消費側の処理時間が生産側のburst間隔より長い場合は`DEPTH`を拡大する
+/// (例: 39tap×8chのS3段ではburst4フレームを吸収するためDEPTH=4)。
 pub module BurstFifo #(
     param CHANNELS: u8 = 4, /// 1 wordあたりのchannel数
+    param DEPTH   : u8 = 2, /// FIFOの深さ
 ) (
     clk           : input   clock                                                                                   , /// system clock
     rst           : input   reset                                                                                   , /// reset
@@ -16,10 +19,11 @@ pub module BurstFifo #(
     output_ready  : input   bbool                                                                                   , /// read ready
     output_samples: modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23>::output_port [CHANNELS], /// Q4.23 read word
 ) {
-    var buffer   : gndless_fixedpoint::Q4_23::Raw    [2, CHANNELS];
-    var write_ptr: bbool                                          ;
-    var read_ptr : bbool                                          ;
-    var count    : logic                         <2>              ;
+    const PTR_WIDTH: u32                                                                 = $clog2(DEPTH);
+    var   buffer   : gndless_fixedpoint::Q4_23::Raw                    [DEPTH, CHANNELS];
+    var   write_ptr: logic                         <PTR_WIDTH>                          ;
+    var   read_ptr : logic                         <PTR_WIDTH>                          ;
+    var   count    : logic                         <$clog2(DEPTH + 1)>                  ;
 
     // Gowin合成はprocedural forでinterface配列要素を定数選択できないため、
     // generate assignでplain配列へコピーして使う。
@@ -32,12 +36,12 @@ pub module BurstFifo #(
     var pop : logic;
 
     always_comb {
-        if count == 2'd2 {
+        if count == DEPTH {
             input_ready = false;
         } else {
             input_ready = true;
         }
-        if count == 2'd0 {
+        if count == 0 {
             output_valid = false;
         } else {
             output_valid = true;
@@ -48,48 +52,42 @@ pub module BurstFifo #(
 
     always_ff {
         if_reset {
-            write_ptr = false;
-            read_ptr  = false;
-            count     = 2'd0;
+            write_ptr = 0;
+            read_ptr  = 0;
+            count     = 0;
             for channel in 0..CHANNELS {
-                buffer[0][channel] = gndless_fixedpoint::Q4_23::ZERO;
-                buffer[1][channel] = gndless_fixedpoint::Q4_23::ZERO;
+                for slot in 0..DEPTH {
+                    buffer[slot][channel] = gndless_fixedpoint::Q4_23::ZERO;
+                }
             }
         } else {
             if push {
-                if write_ptr {
-                    for channel in 0..CHANNELS {
-                        buffer[1][channel] = input_raw[channel];
-                    }
-                } else {
-                    for channel in 0..CHANNELS {
-                        buffer[0][channel] = input_raw[channel];
-                    }
+                for channel in 0..CHANNELS {
+                    buffer[write_ptr][channel] = input_raw[channel];
                 }
-                write_ptr = !write_ptr;
+                if write_ptr == DEPTH - 1 {
+                    write_ptr = 0;
+                } else {
+                    write_ptr = write_ptr + 1;
+                }
             }
             if pop {
-                read_ptr = !read_ptr;
+                if read_ptr == DEPTH - 1 {
+                    read_ptr = 0;
+                } else {
+                    read_ptr = read_ptr + 1;
+                }
             }
             if push && !pop {
-                count = count + 2'd1;
+                count = count + 1;
             } else if !push && pop {
-                count = count - 2'd1;
+                count = count - 1;
             }
-        }
-    }
-
-    var read_slot: logic<2>;
-    always_comb {
-        if read_ptr {
-            read_slot = 2'd1;
-        } else {
-            read_slot = 2'd0;
         }
     }
 
     for channel in 0..CHANNELS :g_out {
-        assign output_samples[channel].raw = buffer[read_slot][channel];
+        assign output_samples[channel].raw = buffer[read_ptr][channel];
     }
 }
 

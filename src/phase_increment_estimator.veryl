@@ -39,6 +39,7 @@ pub module PhaseIncrementEstimator #(
     const DIVISOR_WIDTH : u32 = PERIOD_WIDTH + PERIOD_FRACTION;
     const DIVIDEND_WIDTH: u32 = PHASE_WIDTH + PERIOD_FRACTION + RATE_MULTIPLIER_SHIFT + 1;
     const COUNT_WIDTH   : u32 = $clog2(DIVIDEND_WIDTH);
+    const REM_WIDTH     : u32 = DIVISOR_WIDTH + 1; // remainderを1bit左シフトした中間幅
 
     var measured_period  : logic<PERIOD_WIDTH> ;
     var period_valid     : bbool               ;
@@ -46,14 +47,14 @@ pub module PhaseIncrementEstimator #(
     var tracker_locked   : bbool               ;
     var tracker_timed_out: bbool               ;
 
-    var div_busy      : bbool                ;
-    var div_count     : logic<COUNT_WIDTH>   ;
-    var div_work      : logic<DIVIDEND_WIDTH>;
-    var div_remainder : logic<DIVIDEND_WIDTH>;
-    var div_quotient  : logic<DIVIDEND_WIDTH>;
-    var div_divisor   : logic<DIVISOR_WIDTH> ;
-    var pending_valid : bbool                ;
-    var pending_period: logic<DIVISOR_WIDTH> ;
+    var div_busy      : bbool               ;
+    var div_count     : logic<COUNT_WIDTH>  ;
+    var div_remainder : logic<DIVISOR_WIDTH>; // 常に divisor 未満
+    var div_quotient  : logic<PHASE_WIDTH>  ; // 範囲外はrange_flagで検出し、下位PHASE_WIDTHのみ保持
+    var range_flag    : bbool               ;
+    var div_divisor   : logic<DIVISOR_WIDTH>;
+    var pending_valid : bbool               ;
+    var pending_period: logic<DIVISOR_WIDTH>;
 
     inst tracker: SampleRateTracker #(
         PERIOD_WIDTH        : PERIOD_WIDTH        ,
@@ -77,9 +78,9 @@ pub module PhaseIncrementEstimator #(
         if_reset {
             div_busy        = false;
             div_count       = 0;
-            div_work        = 0;
             div_remainder   = 0;
             div_quotient    = 0;
+            range_flag      = false;
             div_divisor     = 1;
             pending_valid   = false;
             pending_period  = 0;
@@ -102,39 +103,44 @@ pub module PhaseIncrementEstimator #(
                 // 2^(PHASE_WIDTH + RATE_MULTIPLIER_SHIFT) / period を計算する。
                 div_busy      = true;
                 div_count     = 0;
-                div_work      = (1 as DIVIDEND_WIDTH) << (DIVIDEND_WIDTH - 1);
                 div_remainder = 0;
                 div_quotient  = 0;
+                range_flag    = false;
                 div_divisor   = pending_period;
                 pending_valid = false;
                 range_error   = false;
             } else if div_busy {
-                let rem_shifted : logic<DIVIDEND_WIDTH> = (div_remainder << 1) | (div_work >> (DIVIDEND_WIDTH - 1));
-                let work_shifted: logic<DIVIDEND_WIDTH> = div_work << 1;
-                let divisor_ext : logic<DIVIDEND_WIDTH> = div_divisor;
+                // dividendは2^(DIVIDEND_WIDTH-1)の先頭bitのみが1で、残りは0。
+                // 全幅のshift register (div_work) を持たず、step0の先頭ビットだけをcounterから供給する。
+                let rem_shifted: logic<REM_WIDTH> = (div_remainder << 1) | (if div_count == 0 ? 1'b1 : 1'b0);
+                let divisor_ext: logic<REM_WIDTH> = div_divisor;
+                let q_bit      : logic            = if rem_shifted >= divisor_ext ? 1'b1 : 1'b0;
+                // 完了した商 = (旧div_quotient << 1) | q_bit。同一edge内ではdiv_quotientは更新前の値を見る。
+                let next_quotient: logic<PHASE_WIDTH> = ((div_quotient << 1) | q_bit) as PHASE_WIDTH;
 
-                div_work = work_shifted;
-                if rem_shifted >= divisor_ext {
-                    div_remainder = rem_shifted - divisor_ext;
-                    div_quotient  = (div_quotient << 1) | 1;
+                // 商が2^PHASE_WIDTHを越えるとrange_errorになる。初めて2^(PHASE_WIDTH-1)を
+                // 跨ぐ時点では商はまだ2^PHASE_WIDTH未満でregisterに収まるため、MSBだけで検出できる。
+                // 直前までの検出結果range_flagと現在stepのMSBを組み合わせる（register更新は非blockingのため
+                // 同じedge内の参照には反映されない）。
+                let overflow: logic = if range_flag || div_quotient[PHASE_WIDTH - 1] ? 1'b1 : 1'b0;
+                if div_quotient[PHASE_WIDTH - 1] {
+                    range_flag = true;
+                }
+
+                div_quotient = next_quotient;
+                if q_bit {
+                    div_remainder = (rem_shifted - divisor_ext) as DIVISOR_WIDTH;
                 } else {
-                    div_remainder = rem_shifted;
-                    div_quotient  = div_quotient << 1;
+                    div_remainder = rem_shifted as DIVISOR_WIDTH;
                 }
 
                 if div_count == DIVIDEND_WIDTH - 1 {
-                    var final_quotient: logic<DIVIDEND_WIDTH>;
-                    if rem_shifted >= divisor_ext {
-                        final_quotient = (div_quotient << 1) | 1;
-                    } else {
-                        final_quotient = div_quotient << 1;
-                    }
-                    if final_quotient[DIVIDEND_WIDTH - 1:PHASE_WIDTH] != 0 {
+                    if overflow {
                         phase_increment = 0;
                         locked          = false;
                         range_error     = true;
                     } else {
-                        phase_increment = final_quotient[PHASE_WIDTH - 1:0];
+                        phase_increment = next_quotient;
                         locked          = true;
                         range_error     = false;
                     }
@@ -290,6 +296,313 @@ module test_phase_increment_estimator_pending_and_range {
         // 4 * 2^8 / 2 = 512はQ0.8へ収まらない。
         $assert(!locked, "out-of-range phase increment must not lock");
         $assert(range_error, "out-of-range phase increment was not reported");
+        $finish();
+    }
+}
+
+/// 旧実装（全幅div_workとfinal_quotient）の参照モデル (equivalence test用)
+module RefPhaseIncrementEstimator #(
+    param PERIOD_WIDTH         : u32 = 16,
+    param PERIOD_FRACTION      : u32 = 8 ,
+    param PHASE_WIDTH          : u32 = 32,
+    param FILTER_SHIFT         : u32 = 4 ,
+    param LOCK_COUNT           : u32 = 4 ,
+    param RATE_MULTIPLIER_SHIFT: u32 = 0 ,
+    param STEP_THRESHOLD_SHIFT : u32 = 0 ,
+    param TIMEOUT_PERIOD       : u32 = 0 ,
+) (
+    clk            : input  clock             ,
+    rst            : input  reset             ,
+    sample_valid   : input  bbool             ,
+    phase_increment: output logic<PHASE_WIDTH>,
+    locked         : output bbool             ,
+    range_error    : output bbool             ,
+) {
+    const DIVISOR_WIDTH : u32 = PERIOD_WIDTH + PERIOD_FRACTION;
+    const DIVIDEND_WIDTH: u32 = PHASE_WIDTH + PERIOD_FRACTION + RATE_MULTIPLIER_SHIFT + 1;
+    const COUNT_WIDTH   : u32 = $clog2(DIVIDEND_WIDTH);
+
+    var measured_period  : logic<PERIOD_WIDTH> ;
+    var period_valid     : bbool               ;
+    var filtered_period  : logic<DIVISOR_WIDTH>;
+    var tracker_locked   : bbool               ;
+    var tracker_timed_out: bbool               ;
+
+    var div_busy      : bbool                ;
+    var div_count     : logic<COUNT_WIDTH>   ;
+    var div_work      : logic<DIVIDEND_WIDTH>;
+    var div_remainder : logic<DIVIDEND_WIDTH>;
+    var div_quotient  : logic<DIVIDEND_WIDTH>;
+    var div_divisor   : logic<DIVISOR_WIDTH> ;
+    var pending_valid : bbool                ;
+    var pending_period: logic<DIVISOR_WIDTH> ;
+
+    inst tracker: SampleRateTracker #(
+        PERIOD_WIDTH        : PERIOD_WIDTH        ,
+        FRACTION_WIDTH      : PERIOD_FRACTION     ,
+        FILTER_SHIFT        : FILTER_SHIFT        ,
+        LOCK_COUNT          : LOCK_COUNT          ,
+        STEP_THRESHOLD_SHIFT: STEP_THRESHOLD_SHIFT,
+        TIMEOUT_PERIOD      : TIMEOUT_PERIOD      ,
+    ) (
+        clk                               ,
+        rst                               ,
+        sample_valid                      ,
+        measured_period                   ,
+        period_valid                      ,
+        filtered_period                   ,
+        locked         : tracker_locked   ,
+        timed_out      : tracker_timed_out,
+    );
+
+    always_ff {
+        if_reset {
+            div_busy        = false;
+            div_count       = 0;
+            div_work        = 0;
+            div_remainder   = 0;
+            div_quotient    = 0;
+            div_divisor     = 1;
+            pending_valid   = false;
+            pending_period  = 0;
+            phase_increment = 0;
+            locked          = false;
+            range_error     = false;
+        } else if !tracker_locked || tracker_timed_out {
+            div_busy        = false;
+            pending_valid   = false;
+            phase_increment = 0;
+            locked          = false;
+            range_error     = false;
+        } else {
+            if period_valid && filtered_period != 0 {
+                pending_period = filtered_period;
+                pending_valid  = true;
+            }
+
+            if !div_busy && pending_valid {
+                div_busy      = true;
+                div_count     = 0;
+                div_work      = (1 as DIVIDEND_WIDTH) << (DIVIDEND_WIDTH - 1);
+                div_remainder = 0;
+                div_quotient  = 0;
+                div_divisor   = pending_period;
+                pending_valid = false;
+                range_error   = false;
+            } else if div_busy {
+                let rem_shifted : logic<DIVIDEND_WIDTH> = (div_remainder << 1) | (div_work >> (DIVIDEND_WIDTH - 1));
+                let work_shifted: logic<DIVIDEND_WIDTH> = div_work << 1;
+                let divisor_ext : logic<DIVIDEND_WIDTH> = div_divisor;
+
+                div_work = work_shifted;
+                if rem_shifted >= divisor_ext {
+                    div_remainder = rem_shifted - divisor_ext;
+                    div_quotient  = (div_quotient << 1) | 1;
+                } else {
+                    div_remainder = rem_shifted;
+                    div_quotient  = div_quotient << 1;
+                }
+
+                if div_count == DIVIDEND_WIDTH - 1 {
+                    var final_quotient: logic<DIVIDEND_WIDTH>;
+                    if rem_shifted >= divisor_ext {
+                        final_quotient = (div_quotient << 1) | 1;
+                    } else {
+                        final_quotient = div_quotient << 1;
+                    }
+                    if final_quotient[DIVIDEND_WIDTH - 1:PHASE_WIDTH] != 0 {
+                        phase_increment = 0;
+                        locked          = false;
+                        range_error     = true;
+                    } else {
+                        phase_increment = final_quotient[PHASE_WIDTH - 1:0];
+                        locked          = true;
+                        range_error     = false;
+                    }
+                    div_busy = false;
+                } else {
+                    div_count += 1;
+                }
+            }
+        }
+    }
+}
+
+/// 新実装と旧参照モデルのcycle単位等価性を検証
+/// 周期を1..40まで掃引し、phase_increment・locked・range_errorを全clock比較する
+/// RATE_MULTIPLIER_SHIFT=0（直接）と2（4倍）の両構成で検証する
+#[test(test_phase_increment_estimator_equiv_old)]
+module test_phase_increment_estimator_equiv_old {
+    inst clk: $tb::clock_gen;
+    inst rst: $tb::reset_gen ( clk );
+
+    var sample_valid: bbool;
+
+    var new_inc   : logic<8>;
+    var new_locked: bbool   ;
+    var new_range : bbool   ;
+    var ref_inc   : logic<8>;
+    var ref_locked: bbool   ;
+    var ref_range : bbool   ;
+
+    var mismatches: logic<16>;
+
+    inst dut: PhaseIncrementEstimator #(
+        PERIOD_WIDTH   : 4,
+        PERIOD_FRACTION: 2,
+        PHASE_WIDTH    : 8,
+        FILTER_SHIFT   : 0,
+        LOCK_COUNT     : 2,
+    ) (
+        clk                        ,
+        rst                        ,
+        sample_valid               ,
+        phase_increment: new_inc   ,
+        locked         : new_locked,
+        range_error    : new_range ,
+    );
+
+    inst ref_dut: RefPhaseIncrementEstimator #(
+        PERIOD_WIDTH   : 4,
+        PERIOD_FRACTION: 2,
+        PHASE_WIDTH    : 8,
+        FILTER_SHIFT   : 0,
+        LOCK_COUNT     : 2,
+    ) (
+        clk                        ,
+        rst                        ,
+        sample_valid               ,
+        phase_increment: ref_inc   ,
+        locked         : ref_locked,
+        range_error    : ref_range ,
+    );
+
+    always_ff (clk, rst) {
+        if_reset {
+            mismatches = 0;
+        } else {
+            if new_inc != ref_inc || new_locked != ref_locked || new_range != ref_range {
+                mismatches = mismatches + 1;
+            }
+        }
+    }
+
+    function send_sample (
+        interval: input u32,
+    ) {
+        clk.next(interval - 1);
+        sample_valid = true;
+        clk.next(1);
+        sample_valid = false;
+    }
+
+    initial {
+        sample_valid = false;
+        rst.assert();
+
+        // 基準となる最初のsample
+        sample_valid = true;
+        clk.next(1);
+        sample_valid = false;
+
+        // 周期を1..40まで掃引する。周期1と小さい周期でrange_error、それ以外は有効な増分になる。
+        for p in 1..41 {
+            send_sample(p);
+            send_sample(p);
+            send_sample(p);
+            clk.next(40);
+        }
+
+        $assert(mismatches == 0, "phase increment estimator must be cycle-exact with the old implementation");
+        $finish();
+    }
+}
+
+/// 4倍オーバーサンプリング構成（RATE_MULTIPLIER_SHIFT=2）の旧実装との等価性を検証
+#[test(test_phase_increment_estimator_equiv_old_4x)]
+module test_phase_increment_estimator_equiv_old_4x {
+    inst clk: $tb::clock_gen;
+    inst rst: $tb::reset_gen ( clk );
+
+    var sample_valid: bbool;
+
+    var new_inc   : logic<8>;
+    var new_locked: bbool   ;
+    var new_range : bbool   ;
+    var ref_inc   : logic<8>;
+    var ref_locked: bbool   ;
+    var ref_range : bbool   ;
+
+    var mismatches: logic<16>;
+
+    inst dut: PhaseIncrementEstimator #(
+        PERIOD_WIDTH         : 4,
+        PERIOD_FRACTION      : 2,
+        PHASE_WIDTH          : 8,
+        FILTER_SHIFT         : 0,
+        LOCK_COUNT           : 2,
+        RATE_MULTIPLIER_SHIFT: 2,
+    ) (
+        clk                        ,
+        rst                        ,
+        sample_valid               ,
+        phase_increment: new_inc   ,
+        locked         : new_locked,
+        range_error    : new_range ,
+    );
+
+    inst ref_dut: RefPhaseIncrementEstimator #(
+        PERIOD_WIDTH         : 4,
+        PERIOD_FRACTION      : 2,
+        PHASE_WIDTH          : 8,
+        FILTER_SHIFT         : 0,
+        LOCK_COUNT           : 2,
+        RATE_MULTIPLIER_SHIFT: 2,
+    ) (
+        clk                        ,
+        rst                        ,
+        sample_valid               ,
+        phase_increment: ref_inc   ,
+        locked         : ref_locked,
+        range_error    : ref_range ,
+    );
+
+    always_ff (clk, rst) {
+        if_reset {
+            mismatches = 0;
+        } else {
+            if new_inc != ref_inc || new_locked != ref_locked || new_range != ref_range {
+                mismatches = mismatches + 1;
+            }
+        }
+    }
+
+    function send_sample (
+        interval: input u32,
+    ) {
+        clk.next(interval - 1);
+        sample_valid = true;
+        clk.next(1);
+        sample_valid = false;
+    }
+
+    initial {
+        sample_valid = false;
+        rst.assert();
+
+        sample_valid = true;
+        clk.next(1);
+        sample_valid = false;
+
+        // 4倍構成は周期<=4でrange_error、5以上で有効
+        for p in 1..31 {
+            send_sample(p);
+            send_sample(p);
+            send_sample(p);
+            clk.next(40);
+        }
+
+        $assert(mismatches == 0, "4x phase increment estimator must be cycle-exact with the old implementation");
         $finish();
     }
 }

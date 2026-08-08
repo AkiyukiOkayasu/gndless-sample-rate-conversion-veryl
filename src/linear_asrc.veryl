@@ -71,11 +71,9 @@ module LinearAsrcCore #(
     var _almost_full: logic;
 
     inst input_fifo: $std::fifo #(
-        WIDTH      : SAMPLE_WIDTH              ,
-        TYPE       : signed logic<SAMPLE_WIDTH>,
-        DEPTH      : INPUT_DEPTH               ,
-        FLAG_FF_OUT: false                     ,
-        DATA_FF_OUT: true                      ,
+        WIDTH: SAMPLE_WIDTH              ,
+        TYPE : signed logic<SAMPLE_WIDTH>,
+        DEPTH: INPUT_DEPTH               ,
     ) (
         i_clk        : clk         ,
         i_rst        : rst         ,

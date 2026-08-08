@@ -19,11 +19,12 @@ pub module BurstFifo #(
     output_ready  : input   bbool                                                                                   , /// read ready
     output_samples: modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23>::output_port [CHANNELS], /// Q4.23 read word
 ) {
-    const PTR_WIDTH: u32                                                                 = $clog2(DEPTH);
-    var   buffer   : gndless_fixedpoint::Q4_23::Raw                    [DEPTH, CHANNELS];
-    var   write_ptr: logic                         <PTR_WIDTH>                          ;
-    var   read_ptr : logic                         <PTR_WIDTH>                          ;
-    var   count    : logic                         <$clog2(DEPTH + 1)>                  ;
+    const PTR_WIDTH: u32 = $clog2(DEPTH);
+    // payloadはresetしない。count==0の間はoutput_validがLowになり、未初期化wordは読み出されない。
+    var buffer   : gndless_fixedpoint::Q4_23::Raw                    [DEPTH, CHANNELS];
+    var write_ptr: logic                         <PTR_WIDTH>                          ;
+    var read_ptr : logic                         <PTR_WIDTH>                          ;
+    var count    : logic                         <$clog2(DEPTH + 1)>                  ;
 
     // Gowin合成はprocedural forでinterface配列要素を定数選択できないため、
     // generate assignでplain配列へコピーして使う。
@@ -55,11 +56,6 @@ pub module BurstFifo #(
             write_ptr = 0;
             read_ptr  = 0;
             count     = 0;
-            for channel in 0..CHANNELS {
-                for slot in 0..DEPTH {
-                    buffer[slot][channel] = gndless_fixedpoint::Q4_23::ZERO;
-                }
-            }
         } else {
             if push {
                 for channel in 0..CHANNELS {

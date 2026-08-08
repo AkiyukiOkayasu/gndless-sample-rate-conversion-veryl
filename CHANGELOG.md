@@ -1,10 +1,11 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.2] - 2026-08-08
 
 ### Changed
 
 - `LinearAsrc`の入力FIFOを自前RAM実装から`$std::fifo`へ置き換え、BSRAM推論を謳っていたdoc commentを撤去した。16語×27bitの小規模FIFOはGowinでBSRAMへ推論されずFF/LUT実装になるため、登録プリフェッチ+pop_q補正の複雑さだけが残る実態だった。窓の取り込みをpopと同じedgeへ変更し、不要なpop_qを除去した
+- `$std::fifo`は既定パラメータ(登録フラグ)で使用し、advanceからFIFO消費への組み合わせパスは1段レジスタで切断した。Fmaxは61.4MHz(要件50.1MHz)を確保する
 
 ## [0.4.1] - 2026-08-08
 

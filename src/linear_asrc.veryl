@@ -49,6 +49,7 @@ module LinearAsrcCore #(
     var fifo_q        : signed logic<SAMPLE_WIDTH>;
     var fifo_push     : logic                     ;
     var fifo_pop      : logic                     ;
+    var fifo_pop_q    : logic                     ;
     var sample0       : signed logic<SAMPLE_WIDTH>;
     var sample1       : signed logic<SAMPLE_WIDTH>;
     var window_count  : logic       <2>           ;
@@ -84,7 +85,7 @@ module LinearAsrcCore #(
         o_word_count : fifo_level  ,
         i_push       : fifo_push   ,
         i_data       : input_sample,
-        i_pop        : fifo_pop    ,
+        i_pop        : fifo_pop_q  ,
         o_data       : fifo_q      ,
     );
 
@@ -133,6 +134,7 @@ module LinearAsrcCore #(
             product_q      = 0;
             sample0_q      = 0;
             sample0_qq     = 0;
+            fifo_pop_q     = false;
         } else {
             interpolated_q = interpolated;
             delta_q        = sample1 - sample0;
@@ -140,8 +142,10 @@ module LinearAsrcCore #(
             product_q      = $signed({1'b0, phase_q}) * delta_q;
             sample0_q      = sample0;
             sample0_qq     = sample0_q;
-            // $std::fifoのqはpopサイクルの現在の先頭wordを示すため、popと同じedgeで窓へ取り込む。
-            if fifo_pop {
+            // advance→FIFO消費の組み合わせパスを切るためpopを1段登録する。
+            // $std::fifoのqはpopサイクルの現在の先頭wordを示すため、登録したpopと同じedgeで窓へ取り込む。
+            fifo_pop_q = fifo_pop;
+            if fifo_pop_q {
                 if window_count == 2'd0 {
                     sample0      = fifo_q;
                     window_count = 2'd1;
@@ -277,14 +281,26 @@ module test_linear_asrc {
         // 出力は補間パイプラインの遅れで1クロック後に現れる。
         // $std::fifoのqはpopサイクルの先頭wordを示すため、窓はpopと同じedgeで更新される。
         // 出力は補間パイプラインの遅れで1クロック後に現れる。
+        // advance→FIFO消費の組み合わせパスを切るためpopを1段登録しており、窓はadvanceの1クロック後に更新される。
+        // 出力は補間パイプラインの遅れでさらに1クロック後に現れる。
         clk.next(1);
         $assert(output_active, "linear ASRC must become active after priming");
         $assert(output_sample == 16'sd0, "linear ASRC must hold the initial window while priming");
         $assert(!underflow, "linear ASRC must not underflow with buffered input");
-        $assert(input_level == 4'd2, "buffered samples must remain in the FIFO");
+        $assert(input_level == 4'd1, "priming sample must remain in the FIFO");
 
+        clk.next(2);
+        $assert(output_sample == 16'sd25, "linear ASRC quarter phase mismatch");
         clk.next(1);
-        $assert(output_sample == 16'sd0, "linear ASRC must hold the window before the first advance");
+        $assert(output_sample == 16'sd150, "linear ASRC second window half phase mismatch");
+        clk.next(1);
+        $assert(output_sample == 16'sd175, "linear ASRC second window three-quarter phase mismatch");
+        clk.next(1);
+        $assert(output_sample == 16'sd100, "linear ASRC phase wrap must reset to the new window");
+        clk.next(1);
+        $assert(output_sample == 16'sd125, "linear ASRC second window quarter phase mismatch");
+        $assert(!underflow, "linear ASRC must keep the buffered stream running");
+        $finish();
         clk.next(1);
         $assert(output_sample == 16'sd25, "linear ASRC quarter phase mismatch");
         clk.next(1);

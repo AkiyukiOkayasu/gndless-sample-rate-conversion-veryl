@@ -6,6 +6,7 @@
 /// 主に`HalfbandUpsampler`の2クロックburst出力を、入力readyが間欠的な次段へ引き渡すために使う。
 /// 消費側の処理時間が生産側のburst間隔より長い場合は`DEPTH`を拡大する
 /// (例: 39tap×8chのS3段ではburst4フレームを吸収するためDEPTH=4)。
+#[allow(missing_reset_statement)]
 pub module BurstFifo #(
     param CHANNELS: u8 = 4, /// 1 wordあたりのchannel数
     param DEPTH   : u8 = 2, /// FIFOの深さ

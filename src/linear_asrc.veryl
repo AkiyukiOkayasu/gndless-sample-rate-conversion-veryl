@@ -7,6 +7,7 @@ import gndless_fixedpoint::Types::{RoundingMode, OverflowMode};
 /// 読み出しパターン(HalfbandUpsamplerのhistory配列と同一)でRAMを実装し、BSRAM推論に適合させる。
 /// 外部から見たタイミングは`$std::fifo`(DATA_FF_OUT=1)と同一で、`q`は常に現在の先頭wordを
 /// 示し、`pop`でそのwordを消費して次のwordが1クロック後に現れる。
+#[allow(missing_reset_statement)]
 module AsrcInputFifo #(
     param SAMPLE_WIDTH: u32 = 24, /// サンプルの符号付きビット幅
     param DEPTH       : u32 = 32, /// FIFOの深さ

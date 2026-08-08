@@ -15,10 +15,9 @@ target = { type = "directory", path = "target" }
 [test]
 
 [dependencies]
-# 未公開のローカル変更を利用するためpath指定。公開前にgithub依存へ戻す。
-gndless_fixedpoint = { path = "../gndless-fixedpoint-veryl" }
-gndless_interpolation = { path = "../gndless-interpolation-veryl" }
-gndless_nco = { path = "../gndless-nco-veryl" }
+gndless_fixedpoint = { github = "AkiyukiOkayasu/gndless-fixedpoint-veryl", version = "0.2.2" }
+gndless_interpolation = { github = "AkiyukiOkayasu/gndless-interpolation-veryl", version = "0.3.0" }
+gndless_nco = { github = "AkiyukiOkayasu/gndless-nco-veryl", version = "0.2.0" }
 
 [publish]
 register = true

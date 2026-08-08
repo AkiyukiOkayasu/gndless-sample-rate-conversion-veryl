@@ -1,95 +1,5 @@
 import gndless_fixedpoint::Types::{RoundingMode, OverflowMode};
 
-/// BSRAM推論可能な入力FIFO。
-///
-/// `$std::fifo`のRAMは非同期読み出し(BUFFER_OUT=0)のためGowin合成でBSRAMへ推論されず、
-/// 段数の大きいFIFOはFF/LUTを大量に消費する。ここでは「登録アドレス→登録出力」の
-/// 読み出しパターン(HalfbandUpsamplerのhistory配列と同一)でRAMを実装し、BSRAM推論に適合させる。
-/// 外部から見たタイミングは`$std::fifo`(DATA_FF_OUT=1)と同一で、`q`は常に現在の先頭wordを
-/// 示し、`pop`でそのwordを消費して次のwordが1クロック後に現れる。
-#[allow(missing_reset_statement)]
-module AsrcInputFifo #(
-    param SAMPLE_WIDTH: u32 = 24, /// サンプルの符号付きビット幅
-    param DEPTH       : u32 = 32, /// FIFOの深さ
-) (
-    clk  : input  clock                          , /// システムクロック
-    rst  : input  reset                          , /// リセット
-    push : input  logic                          , /// 書き込み要求
-    data : input  signed logic<SAMPLE_WIDTH>     , /// 書き込みデータ
-    pop  : input  logic                          , /// 読み出し要求
-    empty: output logic                          , /// 空
-    full : output logic                          , /// 満杯
-    level: output logic       <$clog2(DEPTH + 1)>, /// ワード数
-    q    : output signed logic<SAMPLE_WIDTH>     , /// 先頭word
-) {
-    const PTR_WIDTH  : u32 = $clog2(DEPTH);
-    const LEVEL_WIDTH: u32 = $clog2(DEPTH + 1);
-
-    var ram       : signed logic<SAMPLE_WIDTH> [DEPTH];
-    var write_ptr : logic       <PTR_WIDTH>           ;
-    var read_ptr  : logic       <PTR_WIDTH>           ;
-    var read_addr : logic       <PTR_WIDTH>           ;
-    var read_data : signed logic<SAMPLE_WIDTH>        ;
-    var count     : logic       <LEVEL_WIDTH>         ;
-    var next_count: logic       <LEVEL_WIDTH>         ;
-
-    always_comb {
-        // push/pop同時はカウント不変。
-        if push && !pop {
-            if count != DEPTH {
-                next_count = count + 1;
-            } else {
-                next_count = count;
-            }
-        } else if pop && !push {
-            if count != 0 {
-                next_count = count - 1;
-            } else {
-                next_count = count;
-            }
-        } else {
-            next_count = count;
-        }
-    }
-
-    always_ff {
-        if_reset {
-            write_ptr = 0;
-            read_ptr  = 0;
-            read_addr = 0;
-            read_data = 0;
-            count     = 0;
-        } else {
-            if push && count != DEPTH {
-                ram[write_ptr] = data;
-                if write_ptr == DEPTH - 1 {
-                    write_ptr = 0;
-                } else {
-                    write_ptr = write_ptr + 1;
-                }
-            }
-            // 先頭を常時プリフェッチする。read_addrを無条件に登録してから読み出す構造は
-            // HalfbandUpsamplerのBSRAM推論パターンと同一で、read_dataは登録アドレスの
-            // 1クロック後に現れる。popサイクルではpop前の先頭wordが読める。
-            read_addr = read_ptr;
-            read_data = ram[read_addr];
-            if pop && count != 0 {
-                if read_ptr == DEPTH - 1 {
-                    read_ptr = 0;
-                } else {
-                    read_ptr = read_ptr + 1;
-                }
-            }
-            count = next_count;
-        }
-    }
-
-    assign empty = count == 0;
-    assign full  = count == DEPTH;
-    assign level = count;
-    assign q     = read_data;
-}
-
 /// FIFOから入力窓を補充しながら、50MHzの全クロックで線形補間値を出力するASRC
 ///
 /// 入力はシステムクロックと非同期(非ロック)の外部クロック由来で、レートは`PhaseIncrementEstimator`と`FractionalPhaseAccumulator`が計測・追従する。
@@ -139,7 +49,6 @@ module LinearAsrcCore #(
     var fifo_q        : signed logic<SAMPLE_WIDTH>;
     var fifo_push     : logic                     ;
     var fifo_pop      : logic                     ;
-    var pop_q         : logic                     ;
     var sample0       : signed logic<SAMPLE_WIDTH>;
     var sample1       : signed logic<SAMPLE_WIDTH>;
     var window_count  : logic       <2>           ;
@@ -159,19 +68,29 @@ module LinearAsrcCore #(
     var   sample0_q      : signed logic<SAMPLE_WIDTH> ;
     var   sample0_qq     : signed logic<SAMPLE_WIDTH> ;
 
-    inst input_fifo: AsrcInputFifo #(
-        SAMPLE_WIDTH: SAMPLE_WIDTH,
-        DEPTH       : INPUT_DEPTH ,
+    var _almost_full: logic;
+
+    // 16語×27bit程度の小規模FIFOはGowinでBSRAMへ推論されずFF/LUT実装になる。
+    // $std::fifo(DATA_FF_OUT=1)をそのまま使う。
+    // qはpopサイクルの現在の先頭wordを示し、popで消費して次のwordが1クロック後に現れる。
+    inst input_fifo: $std::fifo #(
+        WIDTH      : SAMPLE_WIDTH              ,
+        TYPE       : signed logic<SAMPLE_WIDTH>,
+        DEPTH      : INPUT_DEPTH               ,
+        FLAG_FF_OUT: false                     ,
+        DATA_FF_OUT: true                      ,
     ) (
-        clk  : clk         ,
-        rst  : rst         ,
-        push : fifo_push   ,
-        data : input_sample,
-        pop  : fifo_pop    ,
-        empty: fifo_empty  ,
-        full : fifo_full   ,
-        level: fifo_level  ,
-        q    : fifo_q      ,
+        i_clk        : clk         ,
+        i_rst        : rst         ,
+        i_clear      : '0          ,
+        o_empty      : fifo_empty  ,
+        o_almost_full: _almost_full,
+        o_full       : fifo_full   ,
+        o_word_count : fifo_level  ,
+        i_push       : fifo_push   ,
+        i_data       : input_sample,
+        i_pop        : fifo_pop    ,
+        o_data       : fifo_q      ,
     );
 
     always_comb {
@@ -219,7 +138,6 @@ module LinearAsrcCore #(
             product_q      = 0;
             sample0_q      = 0;
             sample0_qq     = 0;
-            pop_q          = false;
         } else {
             interpolated_q = interpolated;
             delta_q        = sample1 - sample0;
@@ -227,11 +145,8 @@ module LinearAsrcCore #(
             product_q      = $signed({1'b0, phase_q}) * delta_q;
             sample0_q      = sample0;
             sample0_qq     = sample0_q;
-            // AsrcInputFifoの読み出しデータはpopの1クロック後に現れるため、popを1クロック
-            // 登録してから窓へ取り込む。窓は位相wrapと同時に更新され、`$std::fifo`時代の
-            // 1クロック遅れのスライドより位相整合が良い(実レートでは差は1/283サンプル以下)。
-            pop_q = fifo_pop;
-            if pop_q {
+            // $std::fifoのqはpopサイクルの現在の先頭wordを示すため、popと同じedgeで窓へ取り込む。
+            if fifo_pop {
                 if window_count == 2'd0 {
                     sample0      = fifo_q;
                     window_count = 2'd1;
@@ -363,25 +278,44 @@ module test_linear_asrc {
         clk.next(1);
         input_valid = false;
 
-        // AsrcInputFifo(BSRAM)化により窓更新が1クロック遅れ、位相wrapと同時に窓が切り替わる。
-        // 出力は1クロック遅れで現れる(実レートでは位相刻み1/283以下で無視できる差)。
+        // $std::fifoのqはpopサイクルの先頭wordを示すため、窓はpopと同じedgeで更新される。
+        // 出力は補間パイプラインの遅れで1クロック後に現れる。
+        // $std::fifoのqはpopサイクルの先頭wordを示すため、窓はpopと同じedgeで更新される。
+        // 出力は補間パイプラインの遅れで1クロック後に現れる。
         clk.next(1);
         $assert(output_active, "linear ASRC must become active after priming");
         $assert(output_sample == 16'sd0, "linear ASRC must hold the initial window while priming");
         $assert(!underflow, "linear ASRC must not underflow with buffered input");
-        $assert(input_level == 4'd1, "priming sample must remain in the FIFO");
+        $assert(input_level == 4'd2, "buffered samples must remain in the FIFO");
 
-        clk.next(2);
+        clk.next(1);
+        $assert(output_sample == 16'sd0, "linear ASRC must hold the window before the first advance");
+        clk.next(1);
         $assert(output_sample == 16'sd25, "linear ASRC quarter phase mismatch");
+        clk.next(1);
+        $assert(output_sample == 16'sd50, "linear ASRC half phase mismatch");
+        clk.next(1);
+        $assert(output_sample == 16'sd75, "linear ASRC three-quarter phase mismatch");
+        clk.next(1);
+        $assert(output_sample == 16'sd0, "linear ASRC phase wrap must reset to the new window");
+        clk.next(1);
+        $assert(output_sample == 16'sd125, "linear ASRC second window quarter phase mismatch");
+        $assert(!underflow, "linear ASRC must keep the buffered stream running");
         clk.next(1);
         $assert(output_sample == 16'sd150, "linear ASRC second window half phase mismatch");
         clk.next(1);
         $assert(output_sample == 16'sd175, "linear ASRC second window three-quarter phase mismatch");
         clk.next(1);
-        $assert(output_sample == 16'sd100, "linear ASRC phase wrap must reset to the new window");
+        $assert(output_sample == 16'sd100, "linear ASRC phase wrap must reset to the third window");
         clk.next(1);
-        $assert(output_sample == 16'sd125, "linear ASRC second window quarter phase mismatch");
-        $assert(!underflow, "linear ASRC must keep the buffered stream running");
+        $assert(output_sample == 16'sd225, "linear ASRC third window quarter phase mismatch");
+        clk.next(1);
+        $assert(output_sample == 16'sd250, "linear ASRC third window half phase mismatch");
+        clk.next(1);
+        $assert(output_sample == 16'sd275, "linear ASRC third window three-quarter phase mismatch");
+        clk.next(1);
+        $assert(output_sample == 16'sd200, "linear ASRC phase wrap must reset to the third window");
+        $assert(underflow, "linear ASRC must latch underflow after the input is exhausted");
         $finish();
     }
 }

@@ -70,9 +70,6 @@ module LinearAsrcCore #(
 
     var _almost_full: logic;
 
-    // 16語×27bit程度の小規模FIFOはGowinでBSRAMへ推論されずFF/LUT実装になる。
-    // $std::fifo(DATA_FF_OUT=1)をそのまま使う。
-    // qはpopサイクルの現在の先頭wordを示し、popで消費して次のwordが1クロック後に現れる。
     inst input_fifo: $std::fifo #(
         WIDTH      : SAMPLE_WIDTH              ,
         TYPE       : signed logic<SAMPLE_WIDTH>,

@@ -1,9 +1,10 @@
 # Changelog
 
-## [Unreleased]
+## [0.4.1] - 2026-08-08
 
 ### Changed
 
+- `PhaseIncrementEstimator`の逐次除算の商を四捨五入化し、切り捨てによる定常レートバイアスを除去
 - `PhaseIncrementEstimator`の逐次除算で、2のべき乗dividendを保持する全幅shift registerを除去し、remainder/quotientを数学的な必要幅へ縮小。旧実装とのcycle単位等価性をequivalence testで検証
 - `BurstFifo`のpayload resetを除去し、`count`/validだけで初期状態を保証
 

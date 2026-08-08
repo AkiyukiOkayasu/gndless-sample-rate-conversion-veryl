@@ -4,6 +4,7 @@
 /// `phase_increment`はQ0.`PHASE_WIDTH`で、値が1.0未満となるサンプルレート比で使用する。
 /// `RATE_MULTIPLIER_SHIFT`を2にすると、4倍オーバーサンプリング経路用の位相増分を生成できる。
 /// 除算は逐次演算で行い、入力サンプル周期より短い`DIVIDEND_WIDTH`クロックで完了する必要がある。
+/// 商は最も近い整数へ四捨五入して`phase_increment`へ出力する。
 /// 除算中に新しい周期を観測した場合は最新の周期を保持し、現在の除算完了後に再計算する。
 /// `TIMEOUT_PERIOD`を有効にすると、入力停止時は古い位相増分を無効化して新しい到着列を再測定する。
 ///
@@ -118,10 +119,8 @@ pub module PhaseIncrementEstimator #(
                 // 完了した商 = (旧div_quotient << 1) | q_bit。同一edge内ではdiv_quotientは更新前の値を見る。
                 let next_quotient: logic<PHASE_WIDTH> = ((div_quotient << 1) | q_bit) as PHASE_WIDTH;
 
-                // 商が2^PHASE_WIDTHを越えるとrange_errorになる。初めて2^(PHASE_WIDTH-1)を
-                // 跨ぐ時点では商はまだ2^PHASE_WIDTH未満でregisterに収まるため、MSBだけで検出できる。
-                // 直前までの検出結果range_flagと現在stepのMSBを組み合わせる（register更新は非blockingのため
-                // 同じedge内の参照には反映されない）。
+                // 商が2^PHASE_WIDTHを越えるとrange_errorになる。初めて2^(PHASE_WIDTH-1)を跨ぐ時点では商はまだ2^PHASE_WIDTH未満でregisterに収まるため、MSBだけで検出できる。
+                // 直前までの検出結果range_flagと現在stepのMSBを組み合わせる（register更新は非blockingのため同じedge内の参照には反映されない）。
                 let overflow: logic = if range_flag || div_quotient[PHASE_WIDTH - 1] ? 1'b1 : 1'b0;
                 if div_quotient[PHASE_WIDTH - 1] {
                     range_flag = true;
@@ -135,10 +134,30 @@ pub module PhaseIncrementEstimator #(
                 }
 
                 if div_count == DIVIDEND_WIDTH - 1 {
+                    // 逐次除算の商はfloorされるため、remainderがdivisorの半分以上なら商へ+1して四捨五入にする。
+                    // div_remainderレジスタは更新前の値が読めるため、最終remainderはrem_shiftedから同じedgeで算出する。
+                    let final_remainder: logic<DIVISOR_WIDTH> = if q_bit ?
+                        (rem_shifted - divisor_ext) as DIVISOR_WIDTH
+                    :
+                        rem_shifted as DIVISOR_WIDTH
+                    ;
+                    let round_up       : logic                = final_remainder >= (div_divisor >> 1);
                     if overflow {
                         phase_increment = 0;
                         locked          = false;
                         range_error     = true;
+                    } else if round_up {
+                        // 上記のoverflowは最終stepの商のMSBを検査しない(更新前のdiv_quotientを見る)ため、+1で全幅wrapする場合のみ商が壊れる。
+                        // 参照モデルの上位bit検査と同じ結果になるようrange_errorへ扱う。
+                        if next_quotient == '1 {
+                            phase_increment = 0;
+                            locked          = false;
+                            range_error     = true;
+                        } else {
+                            phase_increment = next_quotient + 1;
+                            locked          = true;
+                            range_error     = false;
+                        }
                     } else {
                         phase_increment = next_quotient;
                         locked          = true;
@@ -217,12 +236,12 @@ module test_phase_increment_estimator {
         sample_after_five_cycles();
         clk.next(24);
 
-        // 2^8 / 5 = 51、4 * 2^8 / 5 = 204。
+        // 2^8 / 5 = 51.2 -> 51、4 * 2^8 / 5 = 204.8 -> 205(四捨五入)。
         $assert(direct_locked, "direct estimator did not lock");
         $assert(direct_phase_increment == 8'd51, "direct phase increment mismatch");
         $assert(!direct_range_error, "direct estimator reported an unexpected range error");
         $assert(four_x_locked, "four-times estimator did not lock");
-        $assert(four_x_phase_increment == 8'd204, "four-times phase increment mismatch");
+        $assert(four_x_phase_increment == 8'd205, "four-times phase increment mismatch");
         $assert(!four_x_range_error, "four-times estimator reported an unexpected range error");
         $finish();
     }
@@ -275,13 +294,13 @@ module test_phase_increment_estimator_pending_and_range {
         send_sample(5);
 
         // 13clkの除算中に5clk周期で新しい測定を複数回到着させる。
-        // 最新の6clk周期が残り、4 * 2^8 / 6 = 170へ更新される必要がある。
+        // 最新の6clk周期が残り、4 * 2^8 / 6 = 170.67 -> 171(四捨五入)へ更新される必要がある。
         send_sample(6);
         send_sample(6);
         send_sample(6);
         clk.next(24);
         $assert(locked, "estimator lost the latest pending rate");
-        $assert(phase_increment == 8'd170, "estimator did not use the latest pending period");
+        $assert(phase_increment == 8'd171, "estimator did not use the latest pending period");
         $assert(!range_error, "valid pending rate reported a range error");
 
         rst.assert();
@@ -409,6 +428,16 @@ module RefPhaseIncrementEstimator #(
                         final_quotient = (div_quotient << 1) | 1;
                     } else {
                         final_quotient = div_quotient << 1;
+                    }
+                    // 四捨五入: 最終remainderがdivisorの半分以上なら商へ+1する。
+                    // +1で上位bitが溢れる場合は以下の高位検査がrange_errorを検出する。
+                    let final_remainder: logic<DIVISOR_WIDTH> = if rem_shifted >= divisor_ext ?
+                        (rem_shifted - divisor_ext) as DIVISOR_WIDTH
+                    :
+                        rem_shifted as DIVISOR_WIDTH
+                    ;
+                    if final_remainder >= (div_divisor >> 1) {
+                        final_quotient = final_quotient + 1;
                     }
                     if final_quotient[DIVIDEND_WIDTH - 1:PHASE_WIDTH] != 0 {
                         phase_increment = 0;

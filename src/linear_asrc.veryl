@@ -1,9 +1,12 @@
-import gndless_fixedpoint::Types::{RoundingMode, OverflowMode};
+import gndless_fixedpoint::Types;
+import gndless_fixedpoint::FixedPointValue;
+import gndless_fixedpoint::Q4_23;
+import gndless_nco::FractionalPhaseAccumulator;
 
 /// FIFOから入力窓を補充しながら、50MHzの全クロックで線形補間値を出力するASRC
 ///
 /// 入力はシステムクロックと非同期(非ロック)の外部クロック由来で、レートは`PhaseIncrementEstimator`と`FractionalPhaseAccumulator`が計測・追従する。
-/// `phase`と`advance`は`gndless_nco::FractionalPhaseAccumulator`から受け取る。
+/// `phase`と`advance`は`FractionalPhaseAccumulator`から受け取る。
 /// `phase`が現在の入力サンプルから次の入力サンプルへ進む割合を表し、`advance`が次のクロックで窓を1サンプル進めることを表す。
 /// 起動時に2サンプルの補間窓と、`STARTUP_LEVEL`以上の未消費FIFOが揃うまでは`output_active`をfalseにして0を出力する。burst入力ではこの値を大きくして、出力開始前にFIFOへ余裕を持たせる。
 /// 動作開始後は、入力不足を`underflow`へstickyに記録しながら出力を止めない。
@@ -94,12 +97,12 @@ module LinearAsrcCore #(
         let sample0_scaled: signed logic<NUM_WIDTH> = sample0_qq <<< PHASE_WIDTH;
         let numerator     : signed logic<NUM_WIDTH> = sample0_scaled + product_q;
         interpolated   = gndless_fixedpoint::resize::<
-            NUM_WIDTH                         ,
-            PHASE_WIDTH                       ,
-            SAMPLE_WIDTH                      ,
-            0                                 ,
-            RoundingMode::NEAREST_TIES_TO_EVEN,
-            OverflowMode::SATURATE            ,
+            NUM_WIDTH                                ,
+            PHASE_WIDTH                              ,
+            SAMPLE_WIDTH                             ,
+            0                                        ,
+            Types::RoundingMode::NEAREST_TIES_TO_EVEN,
+            Types::OverflowMode::SATURATE            ,
         >(numerator);
     }
 
@@ -171,22 +174,22 @@ module LinearAsrcCore #(
 /// format付きvalue interfaceを使う線形ASRC
 ///
 /// 既定のQ4.23はmodule境界の統一formatで、±1.0の信号を±8.0の範囲で扱う
-pub module LinearAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFormat = gndless_fixedpoint::Q4_23> #(
+pub module LinearAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFormat = Q4_23> #(
     param PHASE_WIDTH  : u32 = 32, /// 位相入力のbit幅
     param INPUT_DEPTH  : u32 = 8 , /// 入力FIFOの深さ
     param STARTUP_LEVEL: u32 = 1 , /// 出力開始に必要な未消費FIFO word数
 ) (
-    clk          : input   clock                                                                              ,
-    rst          : input   reset                                                                              ,
-    input_valid  : input   bbool                                                                              ,
-    input_ready  : output  bbool                                                                              ,
-    input_sample : modport gndless_fixedpoint::FixedPointValue::<FORMAT>::input_port                          ,
-    input_level  : output  logic                                                     <$clog2(INPUT_DEPTH + 1)>,
-    phase        : input   logic                                                     <PHASE_WIDTH>            ,
-    advance      : input   bbool                                                                              ,
-    output_active: output  bbool                                                                              ,
-    output_sample: modport gndless_fixedpoint::FixedPointValue::<FORMAT>::output_port                         ,
-    underflow    : output  bbool                                                                              ,
+    clk          : input   clock                                                          ,
+    rst          : input   reset                                                          ,
+    input_valid  : input   bbool                                                          ,
+    input_ready  : output  bbool                                                          ,
+    input_sample : modport FixedPointValue::<FORMAT>::input_port                          ,
+    input_level  : output  logic                                 <$clog2(INPUT_DEPTH + 1)>,
+    phase        : input   logic                                 <PHASE_WIDTH>            ,
+    advance      : input   bbool                                                          ,
+    output_active: output  bbool                                                          ,
+    output_sample: modport FixedPointValue::<FORMAT>::output_port                         ,
+    underflow    : output  bbool                                                          ,
 ) {
     inst core: LinearAsrcCore #(
         SAMPLE_WIDTH : FORMAT::WIDTH,
@@ -229,7 +232,7 @@ module test_linear_asrc {
     var phase_enable : bbool           ;
     var phase_inc    : logic       <4> ;
 
-    inst phase_accumulator: gndless_nco::FractionalPhaseAccumulator #(
+    inst phase_accumulator: FractionalPhaseAccumulator #(
         WIDTH: PHASE_WIDTH,
     ) (
         clk                          ,

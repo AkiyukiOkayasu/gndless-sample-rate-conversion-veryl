@@ -1,4 +1,7 @@
-import gndless_fixedpoint::Types::{RoundingMode, OverflowMode};
+import gndless_fixedpoint::Types;
+import gndless_fixedpoint::FixedPointValue;
+import gndless_fixedpoint::Q4_23;
+import gndless_fixedpoint::Q1_17;
 
 /// 複数channelのframe vectorを1個のMACでTDM処理する2x halfband upsampler。
 ///
@@ -31,31 +34,30 @@ import gndless_fixedpoint::Types::{RoundingMode, OverflowMode};
 pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfband103Q1_17> #(
     param CHANNELS: u8 = 2, /// channel数。1つのMACでTDM処理する。ステレオを想定して2をデフォルトとする。
 ) (
-    clk           : input   clock                                                                                   , /// system clock
-    rst           : input   reset                                                                                   , /// reset
-    input_valid   : input   bbool                                                                                   , /// input frame vector valid
-    input_ready   : output  bbool                                                                                   , /// input frame vector ready
-    input_samples : modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23>::input_port  [CHANNELS], /// Q4.23 input frame vector
-    output_valid  : output  bbool                                                                                   , /// output vector valid
-    output_samples: modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23>::output_port [CHANNELS], /// Q4.23 output frame vector
+    clk           : input   clock                                           , /// system clock
+    rst           : input   reset                                           , /// reset
+    input_valid   : input   bbool                                           , /// input frame vector valid
+    input_ready   : output  bbool                                           , /// input frame vector ready
+    input_samples : modport FixedPointValue::<Q4_23>::input_port  [CHANNELS], /// Q4.23 input frame vector
+    output_valid  : output  bbool                                           , /// output vector valid
+    output_samples: modport FixedPointValue::<Q4_23>::output_port [CHANNELS], /// Q4.23 output frame vector
 ) {
     const HISTORY_LENGTH   : u32 = COEFFICIENT_SET::PAIR_COUNT * 2;
     const WORD_COUNT       : u32 = CHANNELS * HISTORY_LENGTH;
     const HISTORY_LENGTH_U8: u8  = HISTORY_LENGTH as u8;
     const PAIR_COUNT_U8    : u8  = COEFFICIENT_SET::PAIR_COUNT as u8;
 
-    const PRODUCT_WIDTH    : u8                                                                                = gndless_fixedpoint::Q4_23::WIDTH
-        + gndless_fixedpoint::Q1_17::WIDTH; // 乗算器の出力幅: 入力幅+係数幅
-    const ACCUMULATOR_WIDTH: u8                                                                                = PRODUCT_WIDTH
+    const PRODUCT_WIDTH    : u8                                                                                  = Q4_23::WIDTH
+        + Q1_17::WIDTH; // 乗算器の出力幅: 入力幅+係数幅
+    const ACCUMULATOR_WIDTH: u8                                                                                  = PRODUCT_WIDTH
         + $clog2(COEFFICIENT_SET::PAIR_COUNT) + 2; // 2は加算でのオーバーフローを考慮したguard bit
-    type product_t         = signed logic<gndless_fixedpoint::Q4_23::WIDTH + gndless_fixedpoint::Q1_17::WIDTH>;
-    type accumulator_t     = signed logic<gndless_fixedpoint::Q4_23::WIDTH + gndless_fixedpoint::Q1_17::WIDTH
-        + $clog2(COEFFICIENT_SET::PAIR_COUNT) + 2>;
+    type product_t         = signed logic<Q4_23::WIDTH + Q1_17::WIDTH>                                          ;
+    type accumulator_t     = signed logic<Q4_23::WIDTH + Q1_17::WIDTH + $clog2(COEFFICIENT_SET::PAIR_COUNT) + 2>;
     // TODO veryl側でgeneric module instantiation時のtype/const宣言順解析が修正されたら、
     //      type宣言をconst参照(signed logic<PRODUCT_WIDTH> / signed logic<ACCUMULATOR_WIDTH>)へ戻す
 
-    const INPUT_FRAC : u8 = gndless_fixedpoint::Q4_23::FRACTION_BITS + gndless_fixedpoint::Q1_17::FRACTION_BITS;
-    const OUTPUT_FRAC: u8 = gndless_fixedpoint::Q4_23::FRACTION_BITS;
+    const INPUT_FRAC : u8 = Q4_23::FRACTION_BITS + Q1_17::FRACTION_BITS;
+    const OUTPUT_FRAC: u8 = Q4_23::FRACTION_BITS;
 
     enum State {
         Idle,
@@ -70,13 +72,13 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
     // 読み出しは同一always_ff内の登録アドレス+登録出力で行い、GowinのBSRAM推論に適合させる。
     // resetを持たないため初期値は不定で、最初のHISTORY_LENGTH frame分の出力に不定値が含まれる。
     // ストリームが進めば即座に実データへ置き換わる。
-    var history_left    : gndless_fixedpoint::Q4_23::Raw [WORD_COUNT];
-    var history_right   : gndless_fixedpoint::Q4_23::Raw [WORD_COUNT];
-    var history_write_en: logic                                      ;
-    var write_addr      : u8                             [CHANNELS]  ;
-    var next_write_addr : u8                             [CHANNELS]  ;
-    var frame_samples   : gndless_fixedpoint::Q4_23::Raw [CHANNELS]  ;
-    var write_ch        : u8                                         ;
+    var history_left    : Q4_23::Raw [WORD_COUNT];
+    var history_right   : Q4_23::Raw [WORD_COUNT];
+    var history_write_en: logic                  ;
+    var write_addr      : u8         [CHANNELS]  ;
+    var next_write_addr : u8         [CHANNELS]  ;
+    var frame_samples   : Q4_23::Raw [CHANNELS]  ;
+    var write_ch        : u8                     ;
 
     var state      : State;
     var mac_channel: u8   ;
@@ -90,15 +92,15 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
     var issue_pair_q2: u8           ;
     var accumulator  : accumulator_t;
 
-    var read_addr_a: u8                            ;
-    var read_addr_b: u8                            ;
-    var read_data_a: gndless_fixedpoint::Q4_23::Raw;
-    var read_data_b: gndless_fixedpoint::Q4_23::Raw;
+    var read_addr_a: u8        ;
+    var read_addr_b: u8        ;
+    var read_data_a: Q4_23::Raw;
+    var read_data_b: Q4_23::Raw;
 
     // Gowin合成はprocedural forでinterface配列要素を定数選択できないため、
     // generate assignでplain配列へコピーして使う。
-    var input_raw : gndless_fixedpoint::Q4_23::Raw [CHANNELS];
-    var output_raw: gndless_fixedpoint::Q4_23::Raw [CHANNELS];
+    var input_raw : Q4_23::Raw [CHANNELS];
+    var output_raw: Q4_23::Raw [CHANNELS];
     for channel in 0..CHANNELS :g_in {
         assign input_raw[channel] = input_samples[channel].raw;
     }
@@ -114,20 +116,20 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
         assign channel_offset[channel] = (channel as u8) * HISTORY_LENGTH_U8;
     }
 
-    var even_samples: gndless_fixedpoint::Q4_23::Raw [CHANNELS];
-    var odd_samples : gndless_fixedpoint::Q4_23::Raw [CHANNELS];
+    var even_samples: Q4_23::Raw [CHANNELS];
+    var odd_samples : Q4_23::Raw [CHANNELS];
 
-    var read_addr_a_next: u8                            ;
-    var read_addr_b_next: u8                            ;
-    var write_word_addr : u8                            ;
-    var write_data      : gndless_fixedpoint::Q4_23::Raw;
-    var pair_sum        : gndless_fixedpoint::Q4_23::Raw;
-    var coefficient     : COEFFICIENT_SET::Value        ;
-    var product         : product_t                     ;
-    var product_q       : product_t                     ;
-    var product_ext     : accumulator_t                 ;
-    var next_accumulator: accumulator_t                 ;
-    var even_result     : gndless_fixedpoint::Q4_23::Raw;
+    var read_addr_a_next: u8                    ;
+    var read_addr_b_next: u8                    ;
+    var write_word_addr : u8                    ;
+    var write_data      : Q4_23::Raw            ;
+    var pair_sum        : Q4_23::Raw            ;
+    var coefficient     : COEFFICIENT_SET::Value;
+    var product         : product_t             ;
+    var product_q       : product_t             ;
+    var product_ext     : accumulator_t         ;
+    var next_accumulator: accumulator_t         ;
+    var even_result     : Q4_23::Raw            ;
 
     always_comb {
         for channel in 0..CHANNELS {
@@ -179,12 +181,12 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
         // 積はレジスタに載せ、乗算を積算パスから外してFmaxを確保する
         next_accumulator = accumulator + $std::sign_extend::<product_t, accumulator_t>(product_q);
         even_result      = gndless_fixedpoint::resize::<
-            ACCUMULATOR_WIDTH                        ,
-            INPUT_FRAC                               ,
-            gndless_fixedpoint::Q4_23::WIDTH         ,
-            OUTPUT_FRAC                              ,
-            RoundingMode::NEAREST_TIES_AWAY_FROM_ZERO,
-            OverflowMode::SATURATE                   ,
+            ACCUMULATOR_WIDTH                               ,
+            INPUT_FRAC                                      ,
+            Q4_23::WIDTH                                    ,
+            OUTPUT_FRAC                                     ,
+            Types::RoundingMode::NEAREST_TIES_AWAY_FROM_ZERO,
+            Types::OverflowMode::SATURATE                   ,
         >(next_accumulator);
     }
 
@@ -200,13 +202,13 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
             accumulator   = 0;
             read_addr_a   = 0;
             read_addr_b   = 0;
-            read_data_a   = gndless_fixedpoint::Q4_23::ZERO;
-            read_data_b   = gndless_fixedpoint::Q4_23::ZERO;
+            read_data_a   = Q4_23::ZERO;
+            read_data_b   = Q4_23::ZERO;
             for channel in 0..CHANNELS {
                 write_addr[channel]    = 0;
-                frame_samples[channel] = gndless_fixedpoint::Q4_23::ZERO;
-                even_samples[channel]  = gndless_fixedpoint::Q4_23::ZERO;
-                odd_samples[channel]   = gndless_fixedpoint::Q4_23::ZERO;
+                frame_samples[channel] = Q4_23::ZERO;
+                even_samples[channel]  = Q4_23::ZERO;
+                odd_samples[channel]   = Q4_23::ZERO;
             }
         } else if state == Idle {
             if input_valid && input_ready {
@@ -270,7 +272,7 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
         if_reset {
             output_valid = false;
             for channel in 0..CHANNELS {
-                output_raw[channel] = gndless_fixedpoint::Q4_23::ZERO;
+                output_raw[channel] = Q4_23::ZERO;
             }
         } else if state == OutputEven {
             output_valid = true;
@@ -285,7 +287,7 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
         } else {
             output_valid = false;
             for channel in 0..CHANNELS {
-                output_raw[channel] = gndless_fixedpoint::Q4_23::ZERO;
+                output_raw[channel] = Q4_23::ZERO;
             }
         }
     }
@@ -311,8 +313,8 @@ module test_halfband_upsampler {
     var input_ready : bbool;
     var output_valid: bbool;
 
-    inst input_samples : gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [2];
-    inst output_samples: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [2];
+    inst input_samples : FixedPointValue::<Q4_23> [2];
+    inst output_samples: FixedPointValue::<Q4_23> [2];
 
     inst dut: HalfbandUpsampler::<Halfband39Q1_17> #(
         CHANNELS: 2,
@@ -329,7 +331,7 @@ module test_halfband_upsampler {
     initial {
         input_valid = false;
         for i in 0..2 {
-            input_samples[i].raw = gndless_fixedpoint::Q4_23::ZERO;
+            input_samples[i].raw = Q4_23::ZERO;
         }
         rst.assert();
         clk.next(1);
@@ -342,8 +344,8 @@ module test_halfband_upsampler {
                 }
                 clk.next(1);
             }
-            input_samples[0].raw = gndless_fixedpoint::Q4_23::ONE;
-            input_samples[1].raw = gndless_fixedpoint::Q4_23::NEG_ONE;
+            input_samples[0].raw = Q4_23::ONE;
+            input_samples[1].raw = Q4_23::NEG_ONE;
             input_valid          = true;
             clk.next(1);
             input_valid = false;
@@ -355,19 +357,16 @@ module test_halfband_upsampler {
             clk.next(1);
         }
         $assert(
-            output_samples[0].raw == gndless_fixedpoint::Q4_23::ONE + (gndless_fixedpoint::Q4_23::ONE >>> 16),
+            output_samples[0].raw == Q4_23::ONE + (Q4_23::ONE >>> 16),
             "halfband even phase DC gain (ch0) mismatch",
         );
         $assert(
-            output_samples[1].raw == gndless_fixedpoint::Q4_23::NEG_ONE + (gndless_fixedpoint::Q4_23::NEG_ONE >>> 16),
+            output_samples[1].raw == Q4_23::NEG_ONE + (Q4_23::NEG_ONE >>> 16),
             "halfband even phase DC gain (ch1) mismatch",
         );
         clk.next(1);
-        $assert(output_samples[0].raw == gndless_fixedpoint::Q4_23::ONE, "halfband odd phase identity (ch0) mismatch");
-        $assert(
-            output_samples[1].raw == gndless_fixedpoint::Q4_23::NEG_ONE,
-            "halfband odd phase identity (ch1) mismatch",
-        );
+        $assert(output_samples[0].raw == Q4_23::ONE, "halfband odd phase identity (ch0) mismatch");
+        $assert(output_samples[1].raw == Q4_23::NEG_ONE, "halfband odd phase identity (ch1) mismatch");
         clk.next(1);
         $assert(!output_valid, "halfband output must be a two-cycle burst");
 
@@ -379,8 +378,8 @@ module test_halfband_upsampler {
                 }
                 clk.next(1);
             }
-            input_samples[0].raw = (100 + frame * 10) as gndless_fixedpoint::Q4_23::Raw;
-            input_samples[1].raw = (200 + frame * 10) as gndless_fixedpoint::Q4_23::Raw;
+            input_samples[0].raw = (100 + frame * 10) as Q4_23::Raw;
+            input_samples[1].raw = (200 + frame * 10) as Q4_23::Raw;
             input_valid          = true;
             clk.next(1);
             input_valid = false;
@@ -421,8 +420,8 @@ module test_halfband_upsampler_4ch {
     var input_ready : bbool;
     var output_valid: bbool;
 
-    inst input_samples : gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
-    inst output_samples: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
+    inst input_samples : FixedPointValue::<Q4_23> [4];
+    inst output_samples: FixedPointValue::<Q4_23> [4];
 
     inst dut: HalfbandUpsampler::<Halfband103Q1_17> #(
         CHANNELS: 4,
@@ -439,7 +438,7 @@ module test_halfband_upsampler_4ch {
     initial {
         input_valid = false;
         for i in 0..4 {
-            input_samples[i].raw = gndless_fixedpoint::Q4_23::ZERO;
+            input_samples[i].raw = Q4_23::ZERO;
         }
         rst.assert();
         clk.next(1);
@@ -452,8 +451,8 @@ module test_halfband_upsampler_4ch {
                 }
                 clk.next(1);
             }
-            input_samples[0].raw = gndless_fixedpoint::Q4_23::ONE;
-            input_samples[1].raw = gndless_fixedpoint::Q4_23::NEG_ONE;
+            input_samples[0].raw = Q4_23::ONE;
+            input_samples[1].raw = Q4_23::NEG_ONE;
             input_samples[2].raw = 27'sd4_194_304;
             input_samples[3].raw = -27'sd4_194_304;
             input_valid          = true;
@@ -467,25 +466,13 @@ module test_halfband_upsampler_4ch {
             clk.next(1);
         }
         // 103 tap setのeven DC gainは 1 - 2^-16
-        $assert(
-            output_samples[0].raw == gndless_fixedpoint::Q4_23::ONE - 27'sd128,
-            "halfband 4ch even phase DC gain (ch0) mismatch",
-        );
-        $assert(
-            output_samples[1].raw == gndless_fixedpoint::Q4_23::NEG_ONE + 27'sd128,
-            "halfband 4ch even phase DC gain (ch1) mismatch",
-        );
+        $assert(output_samples[0].raw == Q4_23::ONE - 27'sd128, "halfband 4ch even phase DC gain (ch0) mismatch");
+        $assert(output_samples[1].raw == Q4_23::NEG_ONE + 27'sd128, "halfband 4ch even phase DC gain (ch1) mismatch");
         $assert(output_samples[2].raw == 27'sd4_194_240, "halfband 4ch even phase DC gain (ch2) mismatch");
         $assert(output_samples[3].raw == -27'sd4_194_240, "halfband 4ch even phase DC gain (ch3) mismatch");
         clk.next(1);
-        $assert(
-            output_samples[0].raw == gndless_fixedpoint::Q4_23::ONE,
-            "halfband 4ch odd phase identity (ch0) mismatch",
-        );
-        $assert(
-            output_samples[1].raw == gndless_fixedpoint::Q4_23::NEG_ONE,
-            "halfband 4ch odd phase identity (ch1) mismatch",
-        );
+        $assert(output_samples[0].raw == Q4_23::ONE, "halfband 4ch odd phase identity (ch0) mismatch");
+        $assert(output_samples[1].raw == Q4_23::NEG_ONE, "halfband 4ch odd phase identity (ch1) mismatch");
         $assert(output_samples[2].raw == 27'sd4_194_304, "halfband 4ch odd phase identity (ch2) mismatch");
         $assert(output_samples[3].raw == -27'sd4_194_304, "halfband 4ch odd phase identity (ch3) mismatch");
         clk.next(1);
@@ -500,10 +487,10 @@ module test_halfband_upsampler_4ch {
                 }
                 clk.next(1);
             }
-            input_samples[0].raw = (1000 + frame * 10) as gndless_fixedpoint::Q4_23::Raw;
-            input_samples[1].raw = (2000 + frame * 10) as gndless_fixedpoint::Q4_23::Raw;
-            input_samples[2].raw = (3000 + frame * 10) as gndless_fixedpoint::Q4_23::Raw;
-            input_samples[3].raw = (4000 + frame * 10) as gndless_fixedpoint::Q4_23::Raw;
+            input_samples[0].raw = (1000 + frame * 10) as Q4_23::Raw;
+            input_samples[1].raw = (2000 + frame * 10) as Q4_23::Raw;
+            input_samples[2].raw = (3000 + frame * 10) as Q4_23::Raw;
+            input_samples[3].raw = (4000 + frame * 10) as Q4_23::Raw;
             input_valid          = true;
             clk.next(1);
             input_valid = false;
@@ -551,15 +538,15 @@ module test_halfband_upsampler_cascade {
     var input_ready : bbool;
     var output_valid: bbool;
 
-    inst input_samples : gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
-    inst output_samples: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
+    inst input_samples : FixedPointValue::<Q4_23> [4];
+    inst output_samples: FixedPointValue::<Q4_23> [4];
 
     var mid_valid: bbool;
     var mid_ready: bbool;
     var s2_valid : bbool;
     var s2_ready : bbool;
-    inst mid_samples: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
-    inst s2_samples : gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
+    inst mid_samples: FixedPointValue::<Q4_23> [4];
+    inst s2_samples : FixedPointValue::<Q4_23> [4];
 
     inst s1: HalfbandUpsampler::<Halfband103Q1_17> #(
         CHANNELS: 4,
@@ -601,7 +588,7 @@ module test_halfband_upsampler_cascade {
     initial {
         input_valid = false;
         for i in 0..4 {
-            input_samples[i].raw = gndless_fixedpoint::Q4_23::ZERO;
+            input_samples[i].raw = Q4_23::ZERO;
         }
         rst.assert();
         clk.next(1);
@@ -614,8 +601,8 @@ module test_halfband_upsampler_cascade {
                 }
                 clk.next(1);
             }
-            input_samples[0].raw = gndless_fixedpoint::Q4_23::ONE;
-            input_samples[1].raw = gndless_fixedpoint::Q4_23::NEG_ONE;
+            input_samples[0].raw = Q4_23::ONE;
+            input_samples[1].raw = Q4_23::NEG_ONE;
             input_samples[2].raw = 27'sd4_194_304;
             input_samples[3].raw = -27'sd4_194_304;
             input_valid          = true;
@@ -651,18 +638,18 @@ module test_halfband_upsampler_cascade {
             clk.next(1);
             $assert(output_valid, "cascade output must be a two-cycle burst");
             let odd0: logic<27> = output_samples[0].raw;
-            if odd0 == gndless_fixedpoint::Q4_23::ONE {
+            if odd0 == Q4_23::ONE {
                 seen_odd_v = 1'b1;
-            } else if odd0 == gndless_fixedpoint::Q4_23::ONE - 27'sd128 {
+            } else if odd0 == Q4_23::ONE - 27'sd128 {
                 seen_odd_e = 1'b1;
             }
             $assert(
-                odd0 == gndless_fixedpoint::Q4_23::ONE || odd0 == gndless_fixedpoint::Q4_23::ONE - 27'sd128,
+                odd0 == Q4_23::ONE || odd0 == Q4_23::ONE - 27'sd128,
                 "cascade odd output (ch0) must be V or V - 2^-16",
             );
             let odd1: logic<27> = output_samples[1].raw;
             $assert(
-                odd1 == gndless_fixedpoint::Q4_23::NEG_ONE || odd1 == gndless_fixedpoint::Q4_23::NEG_ONE + 27'sd128,
+                odd1 == Q4_23::NEG_ONE || odd1 == Q4_23::NEG_ONE + 27'sd128,
                 "cascade odd output (ch1) must be -V or -(V - 2^-16)",
             );
             let odd2: logic<27> = output_samples[2].raw;
@@ -698,19 +685,19 @@ module test_halfband_upsampler_burst_input {
     var output_valid: bbool;
     var ready_error : bbool;
 
-    inst input_samples : gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
-    inst output_samples: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
+    inst input_samples : FixedPointValue::<Q4_23> [4];
+    inst output_samples: FixedPointValue::<Q4_23> [4];
 
     var front_valid: bbool;
     var s1_ready   : bbool;
-    inst front_samples: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
+    inst front_samples: FixedPointValue::<Q4_23> [4];
 
     var mid_valid: bbool;
     var mid_ready: bbool;
     var s2_valid : bbool;
     var s2_ready : bbool;
-    inst mid_samples: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
-    inst s2_samples : gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [4];
+    inst mid_samples: FixedPointValue::<Q4_23> [4];
+    inst s2_samples : FixedPointValue::<Q4_23> [4];
 
     inst front_fifo: BurstFifo #(
         CHANNELS: 4,
@@ -773,7 +760,7 @@ module test_halfband_upsampler_burst_input {
     initial {
         input_valid = false;
         for i in 0..4 {
-            input_samples[i].raw = gndless_fixedpoint::Q4_23::ZERO;
+            input_samples[i].raw = Q4_23::ZERO;
         }
         rst.assert();
         clk.next(1);
@@ -786,8 +773,8 @@ module test_halfband_upsampler_burst_input {
                 }
                 clk.next(1);
             }
-            input_samples[0].raw = gndless_fixedpoint::Q4_23::ONE;
-            input_samples[1].raw = gndless_fixedpoint::Q4_23::NEG_ONE;
+            input_samples[0].raw = Q4_23::ONE;
+            input_samples[1].raw = Q4_23::NEG_ONE;
             input_samples[2].raw = 27'sd4_194_304;
             input_samples[3].raw = -27'sd4_194_304;
             input_valid          = true;

@@ -1,3 +1,6 @@
+import gndless_fixedpoint::FixedPointValue;
+import gndless_fixedpoint::Q4_23;
+
 /// 複数sampleまでを吸収するvalid/ready FIFO。
 ///
 /// 書き込み側は連続したburst書き込みを吸収でき、`input_ready`は空きがある間Highになる。
@@ -11,25 +14,25 @@ pub module BurstFifo #(
     param CHANNELS: u8 = 4, /// 1 wordあたりのchannel数
     param DEPTH   : u8 = 2, /// FIFOの深さ
 ) (
-    clk           : input   clock                                                                                   , /// system clock
-    rst           : input   reset                                                                                   , /// reset
-    input_valid   : input   bbool                                                                                   , /// write valid
-    input_ready   : output  bbool                                                                                   , /// write ready (空きがある)
-    input_samples : modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23>::input_port  [CHANNELS], /// Q4.23 write word
-    output_valid  : output  bbool                                                                                   , /// read valid (データあり)
-    output_ready  : input   bbool                                                                                   , /// read ready
-    output_samples: modport gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23>::output_port [CHANNELS], /// Q4.23 read word
+    clk           : input   clock                                           , /// system clock
+    rst           : input   reset                                           , /// reset
+    input_valid   : input   bbool                                           , /// write valid
+    input_ready   : output  bbool                                           , /// write ready (空きがある)
+    input_samples : modport FixedPointValue::<Q4_23>::input_port  [CHANNELS], /// Q4.23 write word
+    output_valid  : output  bbool                                           , /// read valid (データあり)
+    output_ready  : input   bbool                                           , /// read ready
+    output_samples: modport FixedPointValue::<Q4_23>::output_port [CHANNELS], /// Q4.23 read word
 ) {
     const PTR_WIDTH: u32 = $clog2(DEPTH);
     // payloadはresetしない。count==0の間はoutput_validがLowになり、未初期化wordは読み出されない。
-    var buffer   : gndless_fixedpoint::Q4_23::Raw                    [DEPTH, CHANNELS];
-    var write_ptr: logic                         <PTR_WIDTH>                          ;
-    var read_ptr : logic                         <PTR_WIDTH>                          ;
-    var count    : logic                         <$clog2(DEPTH + 1)>                  ;
+    var buffer   : Q4_23::Raw                    [DEPTH, CHANNELS];
+    var write_ptr: logic     <PTR_WIDTH>                          ;
+    var read_ptr : logic     <PTR_WIDTH>                          ;
+    var count    : logic     <$clog2(DEPTH + 1)>                  ;
 
     // Gowin合成はprocedural forでinterface配列要素を定数選択できないため、
     // generate assignでplain配列へコピーして使う。
-    var input_raw: gndless_fixedpoint::Q4_23::Raw [CHANNELS];
+    var input_raw: Q4_23::Raw [CHANNELS];
     for channel in 0..CHANNELS :g_in {
         assign input_raw[channel] = input_samples[channel].raw;
     }
@@ -99,8 +102,8 @@ module test_burst_fifo {
     var output_valid: bbool;
     var output_ready: bbool;
 
-    inst input_samples : gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [2];
-    inst output_samples: gndless_fixedpoint::FixedPointValue::<gndless_fixedpoint::Q4_23> [2];
+    inst input_samples : FixedPointValue::<Q4_23> [2];
+    inst output_samples: FixedPointValue::<Q4_23> [2];
 
     inst dut: BurstFifo #(
         CHANNELS: 2,
@@ -119,7 +122,7 @@ module test_burst_fifo {
         input_valid  = false;
         output_ready = false;
         for i in 0..2 {
-            input_samples[i].raw = gndless_fixedpoint::Q4_23::ZERO;
+            input_samples[i].raw = Q4_23::ZERO;
         }
         rst.assert();
         clk.next(1);

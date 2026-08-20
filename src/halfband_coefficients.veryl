@@ -1,7 +1,9 @@
+import gndless_fixedpoint::Q1_17;
+
 /// 2x halfband補間器の対称係数set。
 ///
 /// `VALUES`はfull FIR tap列ではなく、1個のMACで処理する対称pair係数だけを持つ。
-/// 要素のFormatはgndless_fixedpoint::Q1_17::Rawである。
+/// 要素のFormatはQ1_17::Rawである。
 pub proto package HalfbandCoefficientSet {
     /// ユニークな非ゼロ係数のpair数
     /// 係数は対称であり、非ゼロ係数は奇数番目にしか現れないため、pair数はtap数の半分以下になる。そのためu8で十分である
@@ -17,9 +19,9 @@ pub proto package HalfbandCoefficientSet {
 /// 全係数の絶対値は1.0未満 (最大の最内側pairで約0.636) なので、Q1.17 (範囲[-1.0, +1.0)) に収まる。
 /// Q2.16より小数部が1bit多く、係数量子化誤差が半分になる。
 pub package Halfband103Q1_17 for HalfbandCoefficientSet {
-    const PAIR_COUNT: u8                                          = 26;
-    type Value      = gndless_fixedpoint::Q1_17::Raw             ;
-    type Values     = Value                          [PAIR_COUNT];
+    const PAIR_COUNT: u8                      = 26;
+    type Value      = Q1_17::Raw             ;
+    type Values     = Value      [PAIR_COUNT];
 
     const VALUES: Values = '{
         -18'sd4, 18'sd12, -18'sd24, 18'sd43, -18'sd71, 18'sd111, -18'sd165, 18'sd237, -18'sd330, 18'sd450, -18'sd602,
@@ -33,9 +35,9 @@ pub package Halfband103Q1_17 for HalfbandCoefficientSet {
 /// 係数は`tools/design_halfband_coefficients.py`で設計・量子化する。
 /// 全係数の絶対値は1.0未満 (最大の最内側pairで約0.630) なので、Q1.17 (範囲[-1.0, +1.0)) に収まる。
 pub package Halfband39Q1_17 for HalfbandCoefficientSet {
-    const PAIR_COUNT: u8                                          = 10;
-    type Value      = gndless_fixedpoint::Q1_17::Raw             ;
-    type Values     = Value                          [PAIR_COUNT];
+    const PAIR_COUNT: u8                      = 10;
+    type Value      = Q1_17::Raw             ;
+    type Values     = Value      [PAIR_COUNT];
 
     const VALUES: Values = '{
         -18'sd12, 18'sd97, -18'sd345, 18'sd902, -18'sd1977, 18'sd3878, -18'sd7122, 18'sd12888, -18'sd25367, 18'sd82595,

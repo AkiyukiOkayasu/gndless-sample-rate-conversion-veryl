@@ -1,5 +1,6 @@
 import gndless_fixedpoint::Types;
 import gndless_fixedpoint::FixedPointValue;
+import gndless_fixedpoint::SignedFixedPointFormat;
 import gndless_fixedpoint::Q4_23;
 import gndless_nco::FractionalPhaseAccumulator;
 
@@ -174,7 +175,7 @@ module LinearAsrcCore #(
 /// format付きvalue interfaceを使う線形ASRC
 ///
 /// 既定のQ4.23はmodule境界の統一formatで、±1.0の信号を±8.0の範囲で扱う
-pub module LinearAsrc::<FORMAT: gndless_fixedpoint::SignedFixedPointFormat = Q4_23> #(
+pub module LinearAsrc::<FORMAT: SignedFixedPointFormat = Q4_23> #(
     param PHASE_WIDTH  : u32 = 32, /// 位相入力のbit幅
     param INPUT_DEPTH  : u32 = 8 , /// 入力FIFOの深さ
     param STARTUP_LEVEL: u32 = 1 , /// 出力開始に必要な未消費FIFO word数

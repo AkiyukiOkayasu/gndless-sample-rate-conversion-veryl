@@ -6,6 +6,7 @@
 
 - `gndless_fixedpoint` の package をトップレベル import し、`FixedPointValue` / `Q4_23` / `Q1_17` の完全修飾パスを短縮（Veryl 0.20.3 の namespace import 機能を使用）
 - `SignedFixedPointFormat` を import し、generic constraint の完全修飾パスを短縮（Veryl 0.20.3-nightly の proto package import 機能を使用）
+- `gndless_fixedpoint` の project-scope function (`resize`) を import し、`HalfbandUpsampler` / `LinearAsrc` の完全修飾呼び出しを短縮（Veryl 0.21 の project-scope function import 機能を使用）
 
 ## [0.4.2] - 2026-08-08
 

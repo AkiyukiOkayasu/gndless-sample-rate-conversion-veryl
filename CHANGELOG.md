@@ -8,6 +8,10 @@
 - `SignedFixedPointFormat` を import し、generic constraint の完全修飾パスを短縮（Veryl 0.20.3-nightly の proto package import 機能を使用）
 - `gndless_fixedpoint` の project-scope function (`resize`) を import し、`HalfbandUpsampler` / `LinearAsrc` の完全修飾呼び出しを短縮（Veryl 0.21 の project-scope function import 機能を使用）
 
+### Fixed
+
+- `test_linear_asrc`の期待値を生成SystemVerilog (Verilator) 準拠の系列へ修正。veryl 0.21のnative simulatorはクロックエッジをまたぐNBAの読み出し順に不具合があり、RTLと異なる値を返していた（0.22で修正済み）。重複コメントと`$finish`後の到達しないコードも削除した
+
 ## [0.4.2] - 2026-08-08
 
 ### Changed

@@ -2,6 +2,7 @@ import gndless_fixedpoint::Types;
 import gndless_fixedpoint::FixedPointValue;
 import gndless_fixedpoint::SignedFixedPointFormat;
 import gndless_fixedpoint::Q4_23;
+import gndless_fixedpoint::resize;
 import gndless_nco::FractionalPhaseAccumulator;
 
 /// FIFOから入力窓を補充しながら、50MHzの全クロックで線形補間値を出力するASRC
@@ -97,7 +98,7 @@ module LinearAsrcCore #(
         // 最終段: sample0(2clk前) + product(1clk前)
         let sample0_scaled: signed logic<NUM_WIDTH> = sample0_qq <<< PHASE_WIDTH;
         let numerator     : signed logic<NUM_WIDTH> = sample0_scaled + product_q;
-        interpolated   = gndless_fixedpoint::resize::<
+        interpolated   = resize::<
             NUM_WIDTH                                ,
             PHASE_WIDTH                              ,
             SAMPLE_WIDTH                             ,

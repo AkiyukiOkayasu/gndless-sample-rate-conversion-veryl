@@ -2,6 +2,7 @@ import gndless_fixedpoint::Types;
 import gndless_fixedpoint::FixedPointValue;
 import gndless_fixedpoint::Q4_23;
 import gndless_fixedpoint::Q1_17;
+import gndless_fixedpoint::resize;
 
 /// 複数channelのframe vectorを1個のMACでTDM処理する2x halfband upsampler。
 ///
@@ -180,7 +181,7 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
         product_ext = $std::sign_extend::<product_t, accumulator_t>(product);
         // 積はレジスタに載せ、乗算を積算パスから外してFmaxを確保する
         next_accumulator = accumulator + $std::sign_extend::<product_t, accumulator_t>(product_q);
-        even_result      = gndless_fixedpoint::resize::<
+        even_result      = resize::<
             ACCUMULATOR_WIDTH                               ,
             INPUT_FRAC                                      ,
             Q4_23::WIDTH                                    ,

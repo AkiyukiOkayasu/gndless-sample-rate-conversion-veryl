@@ -216,9 +216,8 @@ pub module LinearAsrc::<FORMAT: SignedFixedPointFormat = Q4_23> #(
 /// 線形ASRCと分数位相アキュムレータの最小統合を検証
 ///
 /// 期待値は生成SystemVerilog (Verilator 5.052で確認) の挙動に一致させている。
-/// veryl 0.21のnative simulatorはクロックエッジをまたぐNBAの読み出し順に不具合があり、
-/// このtestの出力がRTLと一致しなかった (0.22で修正済み)。期待値をnative simulatorの
-/// 観測値へ合わせ直さないこと。
+/// veryl 0.21のnative simulatorはクロックエッジをまたぐNBAの読み出し順に不具合があり、このtestの出力がRTLと一致しなかった (0.22で修正済み)。
+/// 期待値をnative simulatorの観測値へ合わせ直さないこと。
 #[test(test_linear_asrc)]
 module test_linear_asrc {
     const SAMPLE_WIDTH: u32 = 16;

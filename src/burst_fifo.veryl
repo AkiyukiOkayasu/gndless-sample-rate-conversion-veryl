@@ -4,11 +4,10 @@ import gndless_fixedpoint::Q4_23;
 /// 複数sampleまでを吸収するvalid/ready FIFO。
 ///
 /// 書き込み側は連続したburst書き込みを吸収でき、`input_ready`は空きがある間Highになる。
-/// 読み出し側は`output_valid && output_ready`でpopする。書き込みから読み出しまでのレイテンシーは
-/// 1クロックで、burst書き込みとpopが同時に起きても失われない。
+/// 読み出し側は`output_valid && output_ready`でpopする。
+/// 書き込みから読み出しまでのレイテンシーは1クロックで、burst書き込みとpopが同時に起きても失われない。
 /// 主に`HalfbandUpsampler`の2クロックburst出力を、入力readyが間欠的な次段へ引き渡すために使う。
-/// 消費側の処理時間が生産側のburst間隔より長い場合は`DEPTH`を拡大する
-/// (例: 39tap×8chのS3段ではburst4フレームを吸収するためDEPTH=4)。
+/// 消費側の処理時間が生産側のburst間隔より長い場合は`DEPTH`を拡大する(例: 39tap×8chのS3段ではburst4フレームを吸収するためDEPTH=4)。
 #[allow(missing_reset_statement)]
 pub module BurstFifo #(
     param CHANNELS: u8 = 4, /// 1 wordあたりのchannel数
@@ -30,8 +29,7 @@ pub module BurstFifo #(
     var read_ptr : logic     <PTR_WIDTH>                          ;
     var count    : logic     <$clog2(DEPTH + 1)>                  ;
 
-    // Gowin合成はprocedural forでinterface配列要素を定数選択できないため、
-    // generate assignでplain配列へコピーして使う。
+    // Gowin合成はprocedural forでinterface配列要素を定数選択できないため、generate assignでplain配列へコピーして使う。
     var input_raw: Q4_23::Raw [CHANNELS];
     for channel in 0..CHANNELS :g_in {
         assign input_raw[channel] = input_samples[channel].raw;
@@ -158,8 +156,8 @@ module test_burst_fifo {
         // 空になったらvalidはLow
         $assert(!output_valid, "burst fifo must be empty after two pops");
 
-        // count=1の状態でpushするとpushとpopが同時に起きる。新しく書き込んだwordが
-        // 読み出しslotへ入り、失われないこと
+        // count=1の状態でpushするとpushとpopが同時に起きる。
+        // 新しく書き込んだwordが読み出しslotへ入り、失われないこと
         input_valid          = true;
         input_samples[0].raw = 27'sd500;
         input_samples[1].raw = 27'sd600;

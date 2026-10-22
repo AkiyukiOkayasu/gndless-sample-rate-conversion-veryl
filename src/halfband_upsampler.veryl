@@ -8,27 +8,25 @@ import gndless_fixedpoint::resize;
 ///
 /// sampleはQ4.23、係数はQ1.17。module境界はQ4.23で統一し、±1.0の信号を±8.0の範囲で扱う。
 /// 出力もQ4.23のまま。補間によって+/-1.0を超える場合もある。
-/// 入力はQ4.23上で+/-1.0以内(Q1.23相当)であることを前提とする。even phaseの係数の絶対値和は約1.346なので、
-/// 出力は最大+/-1.35程度、`pair_sum`(対称tapの和)は最大+/-2.7程度になり、どちらもQ4.23(±8)の範囲に収まる。
-/// この前提を外れる入力(Q4.23上で±4.0を超える両端)では`pair_sum`が27bitでwrapし、乗算前に破損するため、
-/// producer側で入力が+/-1.0以内に収まることを保証すること。
+/// 入力はQ4.23上で+/-1.0以内(Q1.23相当)であることを前提とする。
+/// even phaseの係数の絶対値和は約1.346なので、出力は最大+/-1.35程度、`pair_sum`(対称tapの和)は最大+/-2.7程度になり、どちらもQ4.23(±8)の範囲に収まる。
+/// この前提を外れる入力(Q4.23上で±4.0を超える両端)では`pair_sum`が27bitでwrapし、乗算前に破損するため、producer側で入力が+/-1.0以内に収まることを保証すること。
 /// 入力frameは`input_valid && input_ready`で受理し、処理中は`input_ready`をLowにする。
 /// 出力はeven phase、odd phaseの順にchannel vectorを1回ずつ出力する。
-/// `output_valid`と`output_samples`は1クロックの出力レジスタを経由する。各出力は対応する状態に入ってから
-/// 1クロック後に現れ、ちょうど1クロックの間保持される。2x upsamplerのため入力frame 1つにつき
-/// even/oddの2出力frameを2クロック連続のburstとして出力するので、`output_valid`は2クロック連続でHighになる。
+/// `output_valid`と`output_samples`は1クロックの出力レジスタを経由する。
+/// 各出力は対応する状態に入ってから1クロック後に現れ、ちょうど1クロックの間保持される。
+/// 2x upsamplerのため入力frame 1つにつきeven/oddの2出力frameを2クロック連続のburstとして出力するので、`output_valid`は2クロック連続でHighになる。
 ///
-/// historyはSRAM推論のためresetで初期化しない。起動直後の内容は不定であり、最初のHISTORY_LENGTH
-/// frame分の出力には不定値が含まれる。ストリームが進めば即座に実データへ置き換わるため、
-/// 消費側は起動過渡の値を要求しないこと。
-/// historyは循環アドレス方式(書き込み位置のみが前進し、タップkは書き込み位置からk前の位置にある)で、
-/// left/rightの2タップを同時に読むため同じ内容を2コピー持つ。書き込みは入力受理後に1 channelずつ行う。
-/// MACはSRAMの同期読み出し(登録アドレス、1clkレイテンシ)をprefetchパイプラインで吸収し、
-/// 1 pair/cycleを維持する。SRAMの書き込みと読み出しは別状態で行うためread-during-writeは発生しない。
+/// historyはSRAM推論のためresetで初期化しない。
+/// 起動直後の内容は不定であり、最初のHISTORY_LENGTH frame分の出力には不定値が含まれる。
+/// ストリームが進めば即座に実データへ置き換わるため、消費側は起動過渡の値を要求しないこと。
+/// historyは循環アドレス方式(書き込み位置のみが前進し、タップkは書き込み位置からk前の位置にある)で、left/rightの2タップを同時に読むため同じ内容を2コピー持つ。
+/// 書き込みは入力受理後に1 channelずつ行う。
+/// MACはSRAMの同期読み出し(登録アドレス、1clkレイテンシ)をprefetchパイプラインで吸収し、1 pair/cycleを維持する。
+/// SRAMの書き込みと読み出しは別状態で行うためread-during-writeは発生しない。
 ///
-/// 係数はfull tap列ではなく、halfbandの対称pair係数を実装した
-/// `HalfbandCoefficientSet` packageから受け取る。MAC自体はchannelと係数pairの
-/// 両方向へ時分割共有する。
+/// 係数はfull tap列ではなく、halfbandの対称pair係数を実装した`HalfbandCoefficientSet` packageから受け取る。
+/// MAC自体はchannelと係数pairの両方向へ時分割共有する。
 ///
 /// COEFFICIENT_SETは係数set prototype`HalfbandCoefficientSet`を実装したpackageで、デフォルトは`Halfband103Q1_17`。
 /// Tap数が少ない`Halfband39Q1_17`も用意している。tap数が少ないと周波数特性は悪化するが、MACの処理時間は短くなる。
@@ -54,8 +52,7 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
         + $clog2(COEFFICIENT_SET::PAIR_COUNT) + 2; // 2は加算でのオーバーフローを考慮したguard bit
     type product_t         = signed logic<Q4_23::WIDTH + Q1_17::WIDTH>                                          ;
     type accumulator_t     = signed logic<Q4_23::WIDTH + Q1_17::WIDTH + $clog2(COEFFICIENT_SET::PAIR_COUNT) + 2>;
-    // TODO veryl側でgeneric module instantiation時のtype/const宣言順解析が修正されたら、
-    //      type宣言をconst参照(signed logic<PRODUCT_WIDTH> / signed logic<ACCUMULATOR_WIDTH>)へ戻す
+    // TODO veryl側でgeneric module instantiation時のtype/const宣言順解析が修正されたら、type宣言をconst参照(signed logic<PRODUCT_WIDTH> / signed logic<ACCUMULATOR_WIDTH>)へ戻す
 
     const INPUT_FRAC : u8 = Q4_23::FRACTION_BITS + Q1_17::FRACTION_BITS;
     const OUTPUT_FRAC: u8 = Q4_23::FRACTION_BITS;
@@ -85,8 +82,9 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
     var mac_channel: u8   ;
     var mac_cycle  : u8   ;
 
-    // MACのprefetchパイプライン。issue_pairは発行中のpairで、PAIR_COUNTと等しいときは
-    // oddタップの読み出しを意味する。issue_pair_qは前サイクルに発行したpairで、係数選択に使う。
+    // MACのprefetchパイプライン。
+    // issue_pairは発行中のpairで、PAIR_COUNTと等しいときはoddタップの読み出しを意味する。
+    // issue_pair_qは前サイクルに発行したpairで、係数選択に使う。
     // 読み出し2clk+積1clkのレイテンシを持ち、積算は積レジスタ(product_q)から行う。
     var issue_pair   : u8           ;
     var issue_pair_q : u8           ;
@@ -98,8 +96,7 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
     var read_data_a: Q4_23::Raw;
     var read_data_b: Q4_23::Raw;
 
-    // Gowin合成はprocedural forでinterface配列要素を定数選択できないため、
-    // generate assignでplain配列へコピーして使う。
+    // Gowin合成はprocedural forでinterface配列要素を定数選択できないため、generate assignでplain配列へコピーして使う。
     var input_raw : Q4_23::Raw [CHANNELS];
     var output_raw: Q4_23::Raw [CHANNELS];
     for channel in 0..CHANNELS :g_in {
@@ -109,9 +106,8 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
         assign output_samples[channel].raw = output_raw[channel];
     }
 
-    // チャンネルごとの語オフセットは定数であり、`channel * HISTORY_LENGTH`の乗算は
-    // Gowin合成でDSP(MULT12X12)へ推論される。generate展開した定数配列を動的インデックスで
-    // 選択(mux)することでDSP資源を節約する。
+    // チャンネルごとの語オフセットは定数であり、`channel * HISTORY_LENGTH`の乗算はGowin合成でDSP(MULT12X12)へ推論される。
+    // generate展開した定数配列を動的インデックスで選択(mux)することでDSP資源を節約する。
     var channel_offset: u8 [CHANNELS];
     for channel in 0..CHANNELS :g_ch_offset {
         assign channel_offset[channel] = (channel as u8) * HISTORY_LENGTH_U8;
@@ -158,9 +154,7 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
 
         // タップkは (write_addr - 1 - k) mod HISTORY_LENGTH にある。
         // port Aはleftタップ(p)、port Bはrightタップ(HISTORY_LENGTH - 1 - p)を読む。
-        // rightタップの式は (write_addr + p) mod HISTORY_LENGTH に変形でき、
-        // p == PAIR_COUNTでoddタップ(DELAY)と一致するため、発行最終サイクルは
-        // port Bにoddタップを読ませる。
+        // rightタップの式は (write_addr + p) mod HISTORY_LENGTH に変形でき、p == PAIR_COUNTでoddタップ(DELAY)と一致するため、発行最終サイクルはport Bにoddタップを読ませる。
         let wa              : u8 = write_addr[mac_channel];
         let v_a             : u8 = wa + HISTORY_LENGTH_U8 - 1 - issue_pair;
         let tap_a           : u8 = if v_a >= HISTORY_LENGTH_U8 ? v_a - HISTORY_LENGTH_U8 : v_a;
@@ -297,11 +291,9 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
 /// HalfbandUpsamplerのDC応答とodd位相の遅延恒等を検証
 ///
 /// 係数setは`Halfband39Q1_17`を使い、DCゲインがちょうど1 + 2^-16になることを利用する。
-/// 39 tap setの係数和は2 * sum(VALUES) = 2^17 + 2なので、DC入力Vに対するeven phase出力は
-/// V + (V >> 16)に剰余なしで一致する。odd phaseは中央tapを通過した入力の遅延恒等で、
-/// 入力からDELAY (PAIR_COUNT - 1) frame前の値をそのまま出力する。
-/// 判定はDCフェーズをHISTORY_LENGTH (20) frame分投入した後の出力で行い、
-/// 起動過渡の不定値(history初期値)は対象外とする。
+/// 39 tap setの係数和は2 * sum(VALUES) = 2^17 + 2なので、DC入力Vに対するeven phase出力はV + (V >> 16)に剰余なしで一致する。
+/// odd phaseは中央tapを通過した入力の遅延恒等で、入力からDELAY (PAIR_COUNT - 1) frame前の値をそのまま出力する。
+/// 判定はDCフェーズをHISTORY_LENGTH (20) frame分投入した後の出力で行い、起動過渡の不定値(history初期値)は対象外とする。
 #[test(test_halfband_upsampler)]
 module test_halfband_upsampler {
     const PAIR_COUNT: u8  = 10;
@@ -406,10 +398,9 @@ module test_halfband_upsampler {
 
 /// 4ch構成で`Halfband103Q1_17`を使い、DC応答とodd位相の遅延恒等を検証
 ///
-/// 103 tap setの係数和はsum(VALUES) = 2^16 - 1なので、DC入力Vに対するeven phase出力は
-/// V - (V >> 16)に剰余なしで一致する。odd phaseは入力からDELAY (PAIR_COUNT - 1) frame前の
-/// 値をそのまま出力する。判定はDCフェーズをHISTORY_LENGTH (52) frame分投入した後の出力で行い、
-/// 起動過渡の不定値(history初期値)は対象外とする。
+/// 103 tap setの係数和はsum(VALUES) = 2^16 - 1なので、DC入力Vに対するeven phase出力はV - (V >> 16)に剰余なしで一致する。
+/// odd phaseは入力からDELAY (PAIR_COUNT - 1) frame前の値をそのまま出力する。
+/// 判定はDCフェーズをHISTORY_LENGTH (52) frame分投入した後の出力で行い、起動過渡の不定値(history初期値)は対象外とする。
 #[test(test_halfband_upsampler_4ch)]
 module test_halfband_upsampler_4ch {
     const DELAY: u32 = 25;
@@ -526,8 +517,7 @@ module test_halfband_upsampler_4ch {
 /// 2段cascade(S1=103tap → BurstFifo → S2=39tap)のDC応答とburst伝搬を検証
 ///
 /// DC入力Vに対するS1のeven出力は V - 2^-16 (E)、odd出力はV(遅延恒等)である。
-/// S2の入力はEとVが交互に並ぶため、対称pairの和は常に E+V で一定になり、
-/// S2のeven出力は round((E+V) * sum(VALUES_39) / 2^17) に一致する。
+/// S2の入力はEとVが交互に並ぶため、対称pairの和は常に E+V で一定になり、S2のeven出力は round((E+V) * sum(VALUES_39) / 2^17) に一致する。
 /// S2のodd出力は入力からDELAY(9) frame前の値で、EとVが交互に現れる。
 /// 段間のBurstFifoはS1の2クロックburstを欠落・順序反転なくS2へ渡す。
 #[test(test_halfband_upsampler_cascade)]
@@ -674,8 +664,7 @@ module test_halfband_upsampler_cascade {
 
 /// 2クロック連続のburst入力をfront BurstFifoが吸収し、2段cascadeへ順序を保って流すことを検証
 ///
-/// S/MUX2相当のA/B burst(2 frame連続)をfront FIFOへ投入し、ready違反(取りこぼし)がなく
-/// DC値がcascadeを通して正しく出力されることを確認する。
+/// S/MUX2相当のA/B burst(2 frame連続)をfront FIFOへ投入し、ready違反(取りこぼし)がなくDC値がcascadeを通して正しく出力されることを確認する。
 #[test(test_halfband_upsampler_burst_input)]
 module test_halfband_upsampler_burst_input {
     inst clk: $tb::clock_gen;

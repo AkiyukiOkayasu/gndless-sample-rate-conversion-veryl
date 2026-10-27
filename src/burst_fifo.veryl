@@ -118,11 +118,10 @@ module test_burst_fifo {
     );
 
     initial {
-        input_valid  = false;
-        output_ready = false;
-        for i in 0..2 {
-            input_samples[i].raw = Q4_23::ZERO;
-        }
+        input_valid          = false;
+        output_ready         = false;
+        input_samples[0].raw = Q4_23::ZERO;
+        input_samples[1].raw = Q4_23::ZERO;
         rst.assert();
         clk.next(1);
 

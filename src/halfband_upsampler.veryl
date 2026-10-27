@@ -324,10 +324,9 @@ module test_halfband_upsampler {
     );
 
     initial {
-        input_valid = false;
-        for i in 0..2 {
-            input_samples[i].raw = Q4_23::ZERO;
-        }
+        input_valid          = false;
+        input_samples[0].raw = Q4_23::ZERO;
+        input_samples[1].raw = Q4_23::ZERO;
         rst.assert();
         clk.next(1);
 
@@ -430,10 +429,11 @@ module test_halfband_upsampler_4ch {
     );
 
     initial {
-        input_valid = false;
-        for i in 0..4 {
-            input_samples[i].raw = Q4_23::ZERO;
-        }
+        input_valid          = false;
+        input_samples[0].raw = Q4_23::ZERO;
+        input_samples[1].raw = Q4_23::ZERO;
+        input_samples[2].raw = Q4_23::ZERO;
+        input_samples[3].raw = Q4_23::ZERO;
         rst.assert();
         clk.next(1);
 
@@ -606,10 +606,15 @@ module test_halfband_upsampler_8ch {
     );
 
     initial {
-        input_valid = false;
-        for i in 0..8 {
-            input_samples[i].raw = Q4_23::ZERO;
-        }
+        input_valid          = false;
+        input_samples[0].raw = Q4_23::ZERO;
+        input_samples[1].raw = Q4_23::ZERO;
+        input_samples[2].raw = Q4_23::ZERO;
+        input_samples[3].raw = Q4_23::ZERO;
+        input_samples[4].raw = Q4_23::ZERO;
+        input_samples[5].raw = Q4_23::ZERO;
+        input_samples[6].raw = Q4_23::ZERO;
+        input_samples[7].raw = Q4_23::ZERO;
         rst.assert();
         clk.next(1);
 
@@ -728,10 +733,11 @@ module test_halfband_upsampler_cascade {
     );
 
     initial {
-        input_valid = false;
-        for i in 0..4 {
-            input_samples[i].raw = Q4_23::ZERO;
-        }
+        input_valid          = false;
+        input_samples[0].raw = Q4_23::ZERO;
+        input_samples[1].raw = Q4_23::ZERO;
+        input_samples[2].raw = Q4_23::ZERO;
+        input_samples[3].raw = Q4_23::ZERO;
         rst.assert();
         clk.next(1);
 
@@ -899,10 +905,11 @@ module test_halfband_upsampler_burst_input {
     }
 
     initial {
-        input_valid = false;
-        for i in 0..4 {
-            input_samples[i].raw = Q4_23::ZERO;
-        }
+        input_valid          = false;
+        input_samples[0].raw = Q4_23::ZERO;
+        input_samples[1].raw = Q4_23::ZERO;
+        input_samples[2].raw = Q4_23::ZERO;
+        input_samples[3].raw = Q4_23::ZERO;
         rst.assert();
         clk.next(1);
 

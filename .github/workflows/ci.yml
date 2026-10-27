@@ -38,4 +38,8 @@ jobs:
           unzip -q "$RUNNER_TEMP/veryl.zip" -d "$RUNNER_TEMP/veryl"
           chmod +x "$RUNNER_TEMP/veryl/veryl"
           echo "$RUNNER_TEMP/veryl" >> "$GITHUB_PATH"
-      - run: veryl test --backend-validate
+      # Veryl 0.22.0のcross-test DUT reuseでcomb storageの誤差が出るため無効化する。
+      - name: Backend validation
+        env:
+          VERYL_DUT_REUSE: '0'
+        run: veryl test --backend-validate

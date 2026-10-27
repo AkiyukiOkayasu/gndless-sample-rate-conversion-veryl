@@ -518,7 +518,8 @@ module test_halfband_upsampler_4ch {
 
 /// 1ch構成で`Halfband103Q1_17`のmodulo前アドレスが切り詰められないことを検証
 ///
-/// `HISTORY_LENGTH=52`に対して`wa + HISTORY_LENGTH - 1`は最大102になり、ADDR_WIDTH=6では収まらない。
+/// 履歴長52を超えるrampを入力し、odd位相の25 frame遅延がring wrap後も正しいことを確認する。
+/// DC入力では全履歴語が同じ値になり、誤ったタップを読んでも検出できない。
 #[test(test_halfband_upsampler_1ch)]
 module test_halfband_upsampler_1ch {
     inst clk: $tb::clock_gen;
@@ -549,14 +550,14 @@ module test_halfband_upsampler_1ch {
         rst.assert();
         clk.next(1);
 
-        for _frame in 0..60 {
+        for frame in 0..60 {
             for _i in 0..400 {
                 if input_ready {
                     break;
                 }
                 clk.next(1);
             }
-            input_samples[0].raw = Q4_23::ONE;
+            input_samples[0].raw = (1000 + frame * 1000) as Q4_23::Raw;
             input_valid          = true;
             clk.next(1);
             input_valid = false;
@@ -568,9 +569,8 @@ module test_halfband_upsampler_1ch {
             }
             clk.next(1);
         }
-        $assert(output_samples[0].raw == Q4_23::ONE - 27'sd128, "1ch even phase DC gain mismatch");
         clk.next(1);
-        $assert(output_samples[0].raw == Q4_23::ONE, "1ch odd phase identity mismatch");
+        $assert(output_samples[0].raw == 27'sd35000, "1ch odd phase must preserve the 25-frame delayed ramp value");
         clk.next(1);
         $assert(!output_valid, "1ch output must be a two-cycle burst");
         $finish();

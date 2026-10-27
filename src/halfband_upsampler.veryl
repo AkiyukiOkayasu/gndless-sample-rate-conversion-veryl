@@ -42,11 +42,11 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
     output_valid  : output  bbool                                           , /// output vector valid
     output_samples: modport FixedPointValue::<Q4_23>::output_port [CHANNELS], /// Q4.23 output frame vector
 ) {
-    const HISTORY_LENGTH   : u32 = COEFFICIENT_SET::PAIR_COUNT * 2;
-    const WORD_COUNT       : u32 = CHANNELS * HISTORY_LENGTH;
-    const ADDR_WIDTH       : u32 = $clog2(WORD_COUNT);
+    const HISTORY_LENGTH    : u32 = COEFFICIENT_SET::PAIR_COUNT * 2;
+    const WORD_COUNT        : u32 = CHANNELS * HISTORY_LENGTH;
+    const ADDR_WIDTH        : u32 = $clog2(WORD_COUNT);
     const HISTORY_LENGTH_U16: u16 = HISTORY_LENGTH as u16;
-    const PAIR_COUNT_U8    : u8  = COEFFICIENT_SET::PAIR_COUNT as u8;
+    const PAIR_COUNT_U8     : u8  = COEFFICIENT_SET::PAIR_COUNT as u8;
 
     const PRODUCT_WIDTH    : u8                                                                                  = Q4_23::WIDTH
         + Q1_17::WIDTH; // 乗算器の出力幅: 入力幅+係数幅
@@ -157,13 +157,13 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
         // タップkは (write_addr - 1 - k) mod HISTORY_LENGTH にある。
         // port Aはleftタップ(p)、port Bはrightタップ(HISTORY_LENGTH - 1 - p)を読む。
         // rightタップの式は (write_addr + p) mod HISTORY_LENGTH に変形でき、p == PAIR_COUNTでoddタップ(DELAY)と一致するため、発行最終サイクルはport Bにoddタップを読ませる。
-        let wa              : logic<ADDR_WIDTH> = write_addr[mac_channel];
-        let v_a             : logic<ADDR_WIDTH> = wa + HISTORY_LENGTH_U16 - 1 - issue_pair;
-        let tap_a           : logic<ADDR_WIDTH> = if v_a >= HISTORY_LENGTH_U16 ? v_a - HISTORY_LENGTH_U16 : v_a;
-        let v_b             : logic<ADDR_WIDTH> = wa + issue_pair;
-        let tap_b           : logic<ADDR_WIDTH> = if v_b >= HISTORY_LENGTH_U16 ? v_b - HISTORY_LENGTH_U16 : v_b;
-        read_addr_a_next = channel_offset[mac_channel] + tap_a;
-        read_addr_b_next = channel_offset[mac_channel] + tap_b;
+        let wa              : logic<ADDR_WIDTH>     = write_addr[mac_channel];
+        let v_a             : logic<ADDR_WIDTH + 1> = wa + HISTORY_LENGTH_U16 - 1 - issue_pair;
+        let tap_a           : logic<ADDR_WIDTH + 1> = if v_a >= HISTORY_LENGTH_U16 ? v_a - HISTORY_LENGTH_U16 : v_a;
+        let v_b             : logic<ADDR_WIDTH + 1> = wa + issue_pair;
+        let tap_b           : logic<ADDR_WIDTH + 1> = if v_b >= HISTORY_LENGTH_U16 ? v_b - HISTORY_LENGTH_U16 : v_b;
+        read_addr_a_next = (channel_offset[mac_channel] + tap_a) as ADDR_WIDTH;
+        read_addr_b_next = (channel_offset[mac_channel] + tap_b) as ADDR_WIDTH;
 
         pair_sum    = read_data_a + read_data_b;
         var coeff_index: u8;
@@ -512,6 +512,67 @@ module test_halfband_upsampler_4ch {
             output_samples[3].raw == 27'sd4040,
             "halfband 4ch odd phase must output the input of DELAY frames before (ch3)",
         );
+        $finish();
+    }
+}
+
+/// 1ch構成で`Halfband103Q1_17`のmodulo前アドレスが切り詰められないことを検証
+///
+/// `HISTORY_LENGTH=52`に対して`wa + HISTORY_LENGTH - 1`は最大102になり、ADDR_WIDTH=6では収まらない。
+#[test(test_halfband_upsampler_1ch)]
+module test_halfband_upsampler_1ch {
+    inst clk: $tb::clock_gen;
+    inst rst: $tb::reset_gen ( clk );
+
+    var input_valid : bbool;
+    var input_ready : bbool;
+    var output_valid: bbool;
+
+    inst input_samples : FixedPointValue::<Q4_23> [1];
+    inst output_samples: FixedPointValue::<Q4_23> [1];
+
+    inst dut: HalfbandUpsampler::<Halfband103Q1_17> #(
+        CHANNELS: 1,
+    ) (
+        clk           : clk           ,
+        rst           : rst           ,
+        input_valid   : input_valid   ,
+        input_ready   : input_ready   ,
+        input_samples : input_samples ,
+        output_valid  : output_valid  ,
+        output_samples: output_samples,
+    );
+
+    initial {
+        input_valid          = false;
+        input_samples[0].raw = Q4_23::ZERO;
+        rst.assert();
+        clk.next(1);
+
+        for _frame in 0..60 {
+            for _i in 0..400 {
+                if input_ready {
+                    break;
+                }
+                clk.next(1);
+            }
+            input_samples[0].raw = Q4_23::ONE;
+            input_valid          = true;
+            clk.next(1);
+            input_valid = false;
+        }
+
+        for _i in 0..400 {
+            if output_valid {
+                break;
+            }
+            clk.next(1);
+        }
+        $assert(output_samples[0].raw == Q4_23::ONE - 27'sd128, "1ch even phase DC gain mismatch");
+        clk.next(1);
+        $assert(output_samples[0].raw == Q4_23::ONE, "1ch odd phase identity mismatch");
+        clk.next(1);
+        $assert(!output_valid, "1ch output must be a two-cycle burst");
         $finish();
     }
 }

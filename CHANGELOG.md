@@ -5,10 +5,11 @@
 ### Fixed
 
 - `HalfbandUpsampler`の履歴アドレスを`$clog2(WORD_COUNT)`幅へ広げ、8ch×103tap構成でアドレスが折り返す問題を修正した
+- `HalfbandUpsampler`のmodulo前タップ計算を1bit広い中間幅で行い、1ch×103tap構成で切り詰められる問題を修正した
 
 ### Added
 
-- `HalfbandUpsampler`の8ch×103tap testと、`BurstFifo`の最小depth testを追加した
+- `HalfbandUpsampler`の1ch/8ch×103tap testと、`BurstFifo`の最小depth testを追加した
 
 ### Changed
 

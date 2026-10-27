@@ -30,6 +30,7 @@ import gndless_fixedpoint::resize;
 ///
 /// COEFFICIENT_SETは係数set prototype`HalfbandCoefficientSet`を実装したpackageで、デフォルトは`Halfband103Q1_17`。
 /// Tap数が少ない`Halfband39Q1_17`も用意している。tap数が少ないと周波数特性は悪化するが、MACの処理時間は短くなる。
+/// `CHANNELS`は1以上を指定する。履歴アドレス幅は`CHANNELS * PAIR_COUNT * 2`から導出するため、8ch以上でも折り返さない。
 pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfband103Q1_17> #(
     param CHANNELS: u8 = 2, /// channel数。1つのMACでTDM処理する。ステレオを想定して2をデフォルトとする。
 ) (
@@ -43,7 +44,8 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
 ) {
     const HISTORY_LENGTH   : u32 = COEFFICIENT_SET::PAIR_COUNT * 2;
     const WORD_COUNT       : u32 = CHANNELS * HISTORY_LENGTH;
-    const HISTORY_LENGTH_U8: u8  = HISTORY_LENGTH as u8;
+    const ADDR_WIDTH       : u32 = $clog2(WORD_COUNT);
+    const HISTORY_LENGTH_U16: u16 = HISTORY_LENGTH as u16;
     const PAIR_COUNT_U8    : u8  = COEFFICIENT_SET::PAIR_COUNT as u8;
 
     const PRODUCT_WIDTH    : u8                                                                                  = Q4_23::WIDTH
@@ -70,13 +72,13 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
     // 読み出しは同一always_ff内の登録アドレス+登録出力で行い、GowinのBSRAM推論に適合させる。
     // resetを持たないため初期値は不定で、最初のHISTORY_LENGTH frame分の出力に不定値が含まれる。
     // ストリームが進めば即座に実データへ置き換わる。
-    var history_left    : Q4_23::Raw [WORD_COUNT];
-    var history_right   : Q4_23::Raw [WORD_COUNT];
-    var history_write_en: logic                  ;
-    var write_addr      : u8         [CHANNELS]  ;
-    var next_write_addr : u8         [CHANNELS]  ;
-    var frame_samples   : Q4_23::Raw [CHANNELS]  ;
-    var write_ch        : u8                     ;
+    var history_left    : Q4_23::Raw             [WORD_COUNT];
+    var history_right   : Q4_23::Raw             [WORD_COUNT];
+    var history_write_en: logic                              ;
+    var write_addr      : logic     <ADDR_WIDTH> [CHANNELS]  ;
+    var next_write_addr : logic     <ADDR_WIDTH> [CHANNELS]  ;
+    var frame_samples   : Q4_23::Raw             [CHANNELS]  ;
+    var write_ch        : u8                                 ;
 
     var state      : State;
     var mac_channel: u8   ;
@@ -91,10 +93,10 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
     var issue_pair_q2: u8           ;
     var accumulator  : accumulator_t;
 
-    var read_addr_a: u8        ;
-    var read_addr_b: u8        ;
-    var read_data_a: Q4_23::Raw;
-    var read_data_b: Q4_23::Raw;
+    var read_addr_a: logic     <ADDR_WIDTH>;
+    var read_addr_b: logic     <ADDR_WIDTH>;
+    var read_data_a: Q4_23::Raw            ;
+    var read_data_b: Q4_23::Raw            ;
 
     // Gowin合成はprocedural forでinterface配列要素を定数選択できないため、generate assignでplain配列へコピーして使う。
     var input_raw : Q4_23::Raw [CHANNELS];
@@ -108,25 +110,25 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
 
     // チャンネルごとの語オフセットは定数であり、`channel * HISTORY_LENGTH`の乗算はGowin合成でDSP(MULT12X12)へ推論される。
     // generate展開した定数配列を動的インデックスで選択(mux)することでDSP資源を節約する。
-    var channel_offset: u8 [CHANNELS];
+    var channel_offset: logic<ADDR_WIDTH> [CHANNELS];
     for channel in 0..CHANNELS :g_ch_offset {
-        assign channel_offset[channel] = (channel as u8) * HISTORY_LENGTH_U8;
+        assign channel_offset[channel] = (channel as u32 * HISTORY_LENGTH) as ADDR_WIDTH;
     }
 
     var even_samples: Q4_23::Raw [CHANNELS];
     var odd_samples : Q4_23::Raw [CHANNELS];
 
-    var read_addr_a_next: u8                    ;
-    var read_addr_b_next: u8                    ;
-    var write_word_addr : u8                    ;
-    var write_data      : Q4_23::Raw            ;
-    var pair_sum        : Q4_23::Raw            ;
-    var coefficient     : COEFFICIENT_SET::Value;
-    var product         : product_t             ;
-    var product_q       : product_t             ;
-    var product_ext     : accumulator_t         ;
-    var next_accumulator: accumulator_t         ;
-    var even_result     : Q4_23::Raw            ;
+    var read_addr_a_next: logic                 <ADDR_WIDTH>;
+    var read_addr_b_next: logic                 <ADDR_WIDTH>;
+    var write_word_addr : logic                 <ADDR_WIDTH>;
+    var write_data      : Q4_23::Raw                        ;
+    var pair_sum        : Q4_23::Raw                        ;
+    var coefficient     : COEFFICIENT_SET::Value            ;
+    var product         : product_t                         ;
+    var product_q       : product_t                         ;
+    var product_ext     : accumulator_t                     ;
+    var next_accumulator: accumulator_t                     ;
+    var even_result     : Q4_23::Raw                        ;
 
     always_comb {
         for channel in 0..CHANNELS {
@@ -155,11 +157,11 @@ pub module HalfbandUpsampler::<COEFFICIENT_SET: HalfbandCoefficientSet = Halfban
         // タップkは (write_addr - 1 - k) mod HISTORY_LENGTH にある。
         // port Aはleftタップ(p)、port Bはrightタップ(HISTORY_LENGTH - 1 - p)を読む。
         // rightタップの式は (write_addr + p) mod HISTORY_LENGTH に変形でき、p == PAIR_COUNTでoddタップ(DELAY)と一致するため、発行最終サイクルはport Bにoddタップを読ませる。
-        let wa              : u8 = write_addr[mac_channel];
-        let v_a             : u8 = wa + HISTORY_LENGTH_U8 - 1 - issue_pair;
-        let tap_a           : u8 = if v_a >= HISTORY_LENGTH_U8 ? v_a - HISTORY_LENGTH_U8 : v_a;
-        let v_b             : u8 = wa + issue_pair;
-        let tap_b           : u8 = if v_b >= HISTORY_LENGTH_U8 ? v_b - HISTORY_LENGTH_U8 : v_b;
+        let wa              : logic<ADDR_WIDTH> = write_addr[mac_channel];
+        let v_a             : logic<ADDR_WIDTH> = wa + HISTORY_LENGTH_U16 - 1 - issue_pair;
+        let tap_a           : logic<ADDR_WIDTH> = if v_a >= HISTORY_LENGTH_U16 ? v_a - HISTORY_LENGTH_U16 : v_a;
+        let v_b             : logic<ADDR_WIDTH> = wa + issue_pair;
+        let tap_b           : logic<ADDR_WIDTH> = if v_b >= HISTORY_LENGTH_U16 ? v_b - HISTORY_LENGTH_U16 : v_b;
         read_addr_a_next = channel_offset[mac_channel] + tap_a;
         read_addr_b_next = channel_offset[mac_channel] + tap_b;
 
@@ -510,6 +512,94 @@ module test_halfband_upsampler_4ch {
             output_samples[3].raw == 27'sd4040,
             "halfband 4ch odd phase must output the input of DELAY frames before (ch3)",
         );
+        $finish();
+    }
+}
+
+/// 8ch構成で`Halfband103Q1_17`の履歴アドレスが折り返さないことを検証
+///
+/// `CHANNELS * HISTORY_LENGTH = 416` wordを`$clog2(WORD_COUNT)`のアドレスで参照する。
+/// 全チャンネルへ異なるDC値を入力し、even/odd出力がチャンネル間で混ざらないことを確認する。
+#[test(test_halfband_upsampler_8ch)]
+module test_halfband_upsampler_8ch {
+    inst clk: $tb::clock_gen;
+    inst rst: $tb::reset_gen ( clk );
+
+    var input_valid : bbool;
+    var input_ready : bbool;
+    var output_valid: bbool;
+
+    inst input_samples : FixedPointValue::<Q4_23> [8];
+    inst output_samples: FixedPointValue::<Q4_23> [8];
+
+    inst dut: HalfbandUpsampler::<Halfband103Q1_17> #(
+        CHANNELS: 8,
+    ) (
+        clk           : clk           ,
+        rst           : rst           ,
+        input_valid   : input_valid   ,
+        input_ready   : input_ready   ,
+        input_samples : input_samples ,
+        output_valid  : output_valid  ,
+        output_samples: output_samples,
+    );
+
+    initial {
+        input_valid = false;
+        for i in 0..8 {
+            input_samples[i].raw = Q4_23::ZERO;
+        }
+        rst.assert();
+        clk.next(1);
+
+        // 103 tap setのDCゲインは 1 - 2^-16 なので、even phaseは入力から V>>16 を引いた値になる。
+        for _frame in 0..60 {
+            for _i in 0..400 {
+                if input_ready {
+                    break;
+                }
+                clk.next(1);
+            }
+            input_samples[0].raw = Q4_23::ONE;
+            input_samples[1].raw = Q4_23::NEG_ONE;
+            input_samples[2].raw = 27'sd4_194_304;
+            input_samples[3].raw = -27'sd4_194_304;
+            input_samples[4].raw = 27'sd1000;
+            input_samples[5].raw = -27'sd1000;
+            input_samples[6].raw = 27'sd2000;
+            input_samples[7].raw = -27'sd2000;
+            input_valid          = true;
+            clk.next(1);
+            input_valid = false;
+        }
+
+        for _i in 0..400 {
+            if output_valid {
+                break;
+            }
+            clk.next(1);
+        }
+        $assert(output_samples[0].raw == Q4_23::ONE - 27'sd128, "8ch even phase CH0 mismatch");
+        $assert(output_samples[1].raw == Q4_23::NEG_ONE + 27'sd128, "8ch even phase CH1 mismatch");
+        $assert(output_samples[2].raw == 27'sd4_194_240, "8ch even phase CH2 mismatch");
+        $assert(output_samples[3].raw == -27'sd4_194_240, "8ch even phase CH3 mismatch");
+        $assert(output_samples[4].raw == 27'sd1000, "8ch even phase CH4 mismatch");
+        $assert(output_samples[5].raw == -27'sd1000, "8ch even phase CH5 mismatch");
+        $assert(output_samples[6].raw == 27'sd2000, "8ch even phase CH6 mismatch");
+        $assert(output_samples[7].raw == -27'sd2000, "8ch even phase CH7 mismatch");
+
+        clk.next(1);
+        $assert(output_samples[0].raw == Q4_23::ONE, "8ch odd phase CH0 mismatch");
+        $assert(output_samples[1].raw == Q4_23::NEG_ONE, "8ch odd phase CH1 mismatch");
+        $assert(output_samples[2].raw == 27'sd4_194_304, "8ch odd phase CH2 mismatch");
+        $assert(output_samples[3].raw == -27'sd4_194_304, "8ch odd phase CH3 mismatch");
+        $assert(output_samples[4].raw == 27'sd1000, "8ch odd phase CH4 mismatch");
+        $assert(output_samples[5].raw == -27'sd1000, "8ch odd phase CH5 mismatch");
+        $assert(output_samples[6].raw == 27'sd2000, "8ch odd phase CH6 mismatch");
+        $assert(output_samples[7].raw == -27'sd2000, "8ch odd phase CH7 mismatch");
+
+        clk.next(1);
+        $assert(!output_valid, "8ch output must be a two-cycle burst");
         $finish();
     }
 }

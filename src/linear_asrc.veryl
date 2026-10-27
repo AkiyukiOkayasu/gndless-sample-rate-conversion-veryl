@@ -8,6 +8,7 @@ import gndless_nco::FractionalPhaseAccumulator;
 /// FIFOから入力窓を補充しながら、50MHzの全クロックで線形補間値を出力するASRC
 ///
 /// 入力はシステムクロックと非同期(非ロック)の外部クロック由来で、レートは`PhaseIncrementEstimator`と`FractionalPhaseAccumulator`が計測・追従する。
+/// 補間差分は`SAMPLE_WIDTH`幅でwrapするため、|sample1 - sample0| < 2^(SAMPLE_WIDTH - 1)を要求する。
 /// `phase`と`advance`は`FractionalPhaseAccumulator`から受け取る。
 /// `phase`が現在の入力サンプルから次の入力サンプルへ進む割合を表し、`advance`が次のクロックで窓を1サンプル進めることを表す。
 /// 起動時に2サンプルの補間窓と、`STARTUP_LEVEL`以上の未消費FIFOが揃うまでは`output_active`をfalseにして0を出力する。burst入力ではこの値を大きくして、出力開始前にFIFOへ余裕を持たせる。

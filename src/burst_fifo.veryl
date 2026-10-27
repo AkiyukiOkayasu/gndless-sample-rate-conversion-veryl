@@ -8,10 +8,11 @@ import gndless_fixedpoint::Q4_23;
 /// 書き込みから読み出しまでのレイテンシーは1クロックで、burst書き込みとpopが同時に起きても失われない。
 /// 主に`HalfbandUpsampler`の2クロックburst出力を、入力readyが間欠的な次段へ引き渡すために使う。
 /// 消費側の処理時間が生産側のburst間隔より長い場合は`DEPTH`を拡大する(例: 39tap×8chのS3段ではburst4フレームを吸収するためDEPTH=4)。
+/// `CHANNELS`と`DEPTH`は1以上を指定する。
 #[allow(missing_reset_statement)]
 pub module BurstFifo #(
-    param CHANNELS: u8 = 4, /// 1 wordあたりのchannel数
-    param DEPTH   : u8 = 2, /// FIFOの深さ
+    param CHANNELS: u8 = 4, /// 1 wordあたりのchannel数 (1以上)
+    param DEPTH   : u8 = 2, /// FIFOの深さ (1以上)
 ) (
     clk           : input   clock                                           , /// system clock
     rst           : input   reset                                           , /// reset
@@ -22,7 +23,7 @@ pub module BurstFifo #(
     output_ready  : input   bbool                                           , /// read ready
     output_samples: modport FixedPointValue::<Q4_23>::output_port [CHANNELS], /// Q4.23 read word
 ) {
-    const PTR_WIDTH: u32 = $clog2(DEPTH);
+    const PTR_WIDTH: u32 = $std::max::<u32>($clog2(DEPTH), 1);
     // payloadはresetしない。count==0の間はoutput_validがLowになり、未初期化wordは読み出されない。
     var buffer   : Q4_23::Raw                    [DEPTH, CHANNELS];
     var write_ptr: logic     <PTR_WIDTH>                          ;
@@ -181,6 +182,56 @@ module test_burst_fifo {
         );
         clk.next(1);
         $assert(!output_valid, "burst fifo must be drained after concurrent push/pop");
+        $finish();
+    }
+}
+
+/// 最小depthと1ch構成でゼロ幅ポインタにならないことを検証
+#[test(test_burst_fifo_depth_one)]
+module test_burst_fifo_depth_one {
+    inst clk: $tb::clock_gen;
+    inst rst: $tb::reset_gen ( clk );
+
+    var input_valid : bbool;
+    var input_ready : bbool;
+    var output_valid: bbool;
+    var output_ready: bbool;
+
+    inst input_samples : FixedPointValue::<Q4_23> [1];
+    inst output_samples: FixedPointValue::<Q4_23> [1];
+
+    inst dut: BurstFifo #(
+        CHANNELS: 1,
+        DEPTH   : 1,
+    ) (
+        clk             ,
+        rst             ,
+        input_valid     ,
+        input_ready     ,
+        input_samples   ,
+        output_valid    ,
+        output_ready    ,
+        output_samples  ,
+    );
+
+    initial {
+        input_valid          = false;
+        output_ready         = false;
+        input_samples[0].raw = Q4_23::ZERO;
+        rst.assert();
+        clk.next(1);
+
+        input_samples[0].raw = 27'sd123;
+        input_valid          = true;
+        clk.next(1);
+        input_valid = false;
+        $assert(!input_ready, "depth-one fifo must be full after one push");
+        $assert(output_valid, "depth-one fifo must be readable");
+        $assert(output_samples[0].raw == 27'sd123, "depth-one fifo data mismatch");
+
+        output_ready = true;
+        clk.next(1);
+        $assert(!output_valid, "depth-one fifo must be empty after pop");
         $finish();
     }
 }

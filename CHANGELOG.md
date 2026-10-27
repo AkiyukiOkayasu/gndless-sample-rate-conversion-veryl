@@ -2,8 +2,18 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `HalfbandUpsampler`の履歴アドレスを`$clog2(WORD_COUNT)`幅へ広げ、8ch×103tap構成でアドレスが折り返す問題を修正した
+
+### Added
+
+- `HalfbandUpsampler`の8ch×103tap testと、`BurstFifo`の最小depth testを追加した
+
 ### Changed
 
+- `BurstFifo`の`DEPTH=1`をサポートし、`CHANNELS`/`DEPTH`の下限をdoc commentへ明記した
+- `LinearAsrc`の補間差分のheadroom契約をdoc commentへ明記した
 - `gndless_fixedpoint` の package をトップレベル import し、`FixedPointValue` / `Q4_23` / `Q1_17` の完全修飾パスを短縮（Veryl 0.20.3 の namespace import 機能を使用）
 - `SignedFixedPointFormat` を import し、generic constraint の完全修飾パスを短縮（Veryl 0.20.3-nightly の proto package import 機能を使用）
 - `gndless_fixedpoint` の project-scope function (`resize`) を import し、`HalfbandUpsampler` / `LinearAsrc` の完全修飾呼び出しを短縮（Veryl 0.21 の project-scope function import 機能を使用）
